@@ -1,0 +1,296 @@
+// SPDX-License-Identifier: Apache-2.0
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"github.com/rkislov/cerber/internal/agent"
+	"github.com/rkislov/cerber/internal/app"
+	linuxcollector "github.com/rkislov/cerber/internal/collector/linux"
+	"github.com/rkislov/cerber/internal/collector/windows"
+	"github.com/rkislov/cerber/internal/domain"
+	"github.com/rkislov/cerber/internal/ingest"
+	"github.com/rkislov/cerber/internal/inventory"
+	"github.com/rkislov/cerber/internal/storage/sqlite"
+	"io"
+	"os"
+	"runtime"
+	"time"
+)
+
+func readCredentials(path string) (ingest.Credentials, error) {
+	var c ingest.Credentials
+	f, err := os.Open(path)
+	if err != nil {
+		return c, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 4097))
+	if err != nil {
+		return c, err
+	}
+	if len(data) > 4096 {
+		return c, fmt.Errorf("credential file exceeds 4 KiB")
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	if err = d.Decode(&c); err != nil {
+		return c, fmt.Errorf("invalid credential file")
+	}
+	var extra any
+	if d.Decode(&extra) != io.EOF {
+		return c, fmt.Errorf("trailing credential data")
+	}
+	return c, c.Validate()
+}
+func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out, errOut io.Writer) error {
+	command := args[0] + " " + args[1]
+	f := flags(command, errOut)
+	switch command {
+	case "siem serve":
+		listen := f.String("listen", "127.0.0.1:8790", "receiver address")
+		cert := f.String("tls-cert", "", "TLS certificate")
+		key := f.String("tls-key", "", "TLS private key")
+		if err := parse(f, args[2:]); err != nil {
+			return err
+		}
+		return serveHTTP(ctx, ingest.NewHandler(store), *listen, *cert, *key, "SIEM receiver", 2*time.Minute, 2*time.Minute, errOut)
+	case "siem enroll":
+		asset := f.String("asset", "", "server asset ID")
+		file := f.String("out", "", "new credentials file; copy securely to agent")
+		if err := parse(f, args[2:]); err != nil {
+			return err
+		}
+		id, err := domain.NewID()
+		if err != nil {
+			return err
+		}
+		var secret [32]byte
+		if _, err = rand.Read(secret[:]); err != nil {
+			return err
+		}
+		c := ingest.Credentials{AgentID: id, Token: hex.EncodeToString(secret[:])}
+		data, _ := json.MarshalIndent(c, "", "  ")
+		dest, err := os.OpenFile(*file, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		_, err = dest.Write(data)
+		if err == nil {
+			err = dest.Sync()
+		}
+		closeErr := dest.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err == nil {
+			err = store.RegisterAgent(ctx, id, *asset, ingest.Hash([]byte(c.Token)))
+		}
+		if err != nil {
+			os.Remove(*file)
+			return err
+		}
+		return json.NewEncoder(out).Encode(map[string]string{"agent_id": id, "asset_id": *asset, "credentials_file": *file})
+	case "siem revoke":
+		id := f.String("agent", "", "agent ID")
+		if err := parse(f, args[2:]); err != nil {
+			return err
+		}
+		if err := store.RevokeAgent(ctx, *id); err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(map[string]string{"revoked": *id})
+	}
+	credentials := f.String("credentials", "", "agent credentials JSON file")
+	server := f.String("server", "", "SIEM HTTPS origin (required for flush/run)")
+	ca := f.String("ca-cert", "", "additional trusted CA PEM")
+	asset := f.String("asset", "", "local asset ID")
+	snapshot := f.String("inventory", "", "inventory snapshot ID for enqueue")
+	windowsOnline := f.Bool("check-windows-updates", false, "query configured Windows update service")
+	packages := f.Bool("check-package-updates", false, "query native Linux package update candidates")
+	refresh := f.Bool("refresh-package-metadata", false, "refresh configured Linux repository metadata")
+	manager := f.String("package-manager", "auto", "Linux package manager")
+	interval := f.Duration("interval", time.Hour, "collection interval for run (1m–24h)")
+	if err := parse(f, args[2:]); err != nil {
+		return err
+	}
+	allowed := map[string]bool{"credentials": true}
+	switch command {
+	case "agent enqueue":
+		allowed["inventory"] = true
+	case "agent flush":
+		allowed["server"] = true
+		allowed["ca-cert"] = true
+	case "agent collect", "agent run":
+		for _, name := range []string{"asset", "check-windows-updates", "check-package-updates", "refresh-package-metadata", "package-manager"} {
+			allowed[name] = true
+		}
+		if command == "agent run" {
+			allowed["server"] = true
+			allowed["ca-cert"] = true
+			allowed["interval"] = true
+		}
+	}
+	var invalid string
+	f.Visit(func(flag *flag.Flag) {
+		if !allowed[flag.Name] {
+			invalid = flag.Name
+		}
+	})
+	if invalid != "" {
+		return fmt.Errorf("flag -%s does not apply to %s", invalid, command)
+	}
+	c, err := readCredentials(*credentials)
+	if err != nil {
+		return err
+	}
+	if *refresh && !*packages {
+		return fmt.Errorf("metadata refresh requires package update checking")
+	}
+	if command == "agent collect" || command == "agent run" {
+		if *asset == "" {
+			return fmt.Errorf("local asset ID is required")
+		}
+		switch runtime.GOOS {
+		case "windows":
+			if *packages || *refresh || *manager != "auto" {
+				return fmt.Errorf("Linux flags require Linux")
+			}
+		case "linux":
+			if *windowsOnline {
+				return fmt.Errorf("Windows update flag requires Windows")
+			}
+		default:
+			return fmt.Errorf("native agent collection requires Windows or Linux")
+		}
+		switch *manager {
+		case "auto", "apt", "apt-rpm", "dnf", "yum":
+		default:
+			return fmt.Errorf("unknown package manager")
+		}
+	}
+	collect := func() (inventory.Snapshot, error) {
+		svc := app.InventoryService{Store: store, Assets: store}
+		switch runtime.GOOS {
+		case "windows":
+			if *packages || *refresh || *manager != "auto" {
+				return inventory.Snapshot{}, fmt.Errorf("Linux flags require Linux")
+			}
+			return svc.CollectLocal(ctx, *asset, windows.Collector{CheckAvailable: *windowsOnline})
+		case "linux":
+			if *windowsOnline {
+				return inventory.Snapshot{}, fmt.Errorf("Windows update flag requires Windows")
+			}
+			return svc.CollectLocal(ctx, *asset, linuxcollector.Collector{CheckAvailable: *packages, RefreshMetadata: *refresh, Manager: *manager})
+		default:
+			return inventory.Snapshot{}, fmt.Errorf("native agent collection requires Windows or Linux")
+		}
+	}
+	queue := func() (ingest.Report, error) {
+		count, size, err := store.QueueUsage(ctx)
+		if err != nil {
+			return ingest.Report{}, err
+		}
+		if count >= 100 || size >= 256<<20 {
+			return ingest.Report{}, fmt.Errorf("agent queue full; flush before collecting")
+		}
+		s, err := collect()
+		if err != nil {
+			return ingest.Report{}, err
+		}
+		return store.QueueInventory(ctx, c.AgentID, s.ID)
+	}
+	switch command {
+	case "agent enqueue":
+		r, err := store.QueueInventory(ctx, c.AgentID, *snapshot)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(map[string]string{"queued_report_id": r.ID, "inventory_id": r.Snapshot.ID})
+	case "agent collect":
+		r, err := queue()
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(map[string]string{"queued_report_id": r.ID, "inventory_id": r.Snapshot.ID})
+	}
+	if command != "agent flush" && command != "agent run" {
+		return fmt.Errorf("unknown agent command")
+	}
+	var caPEM []byte
+	if *ca != "" {
+		caPEM, err = os.ReadFile(*ca)
+		if err != nil {
+			return err
+		}
+	}
+	client, err := ingest.NewClient(*server, c, caPEM)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	if command == "agent flush" {
+		n, err := agent.Flush(ctx, store, client, c.AgentID)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(map[string]int{"delivered": n})
+	}
+	if *interval < time.Minute || *interval > 24*time.Hour {
+		return fmt.Errorf("collection interval must be 1m–24h")
+	}
+	nextCollection := time.Time{}
+	retry := 30 * time.Second
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		n, deliveryErr := agent.Flush(ctx, store, client, c.AgentID)
+		if deliveryErr != nil {
+			fmt.Fprintf(errOut, "agent delivery: %v\n", deliveryErr)
+		} else if n > 0 {
+			fmt.Fprintf(errOut, "agent delivered %d report(s)\n", n)
+		}
+		if !time.Now().Before(nextCollection) {
+			r, err := queue()
+			nextCollection = time.Now().Add(*interval)
+			if err != nil {
+				fmt.Fprintf(errOut, "agent collection: %v\n", err)
+			} else {
+				fmt.Fprintf(errOut, "agent queued report %s\n", r.ID)
+				_, deliveryErr = agent.Flush(ctx, store, client, c.AgentID)
+				if deliveryErr != nil {
+					fmt.Fprintf(errOut, "agent delivery: %v\n", deliveryErr)
+				}
+			}
+		}
+		if deliveryErr == nil {
+			retry = 30 * time.Second
+		} else if retry < 5*time.Minute {
+			retry *= 2
+			if retry > 5*time.Minute {
+				retry = 5 * time.Minute
+			}
+		}
+		delay := retry
+		until := time.Until(nextCollection)
+		if until < delay {
+			delay = until
+		}
+		if delay < time.Second {
+			delay = time.Second
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+	}
+}
