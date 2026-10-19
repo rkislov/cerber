@@ -59,3 +59,29 @@ func TestValidationRejectsMissingCoverageAndDuplicateIdentities(t *testing.T) {
 		t.Fatal("missing coverage accepted")
 	}
 }
+
+func TestOSPartialBaselineIsObservationNotConfirmedChange(t *testing.T) {
+	before := snap()
+	after := snap()
+	after.CollectedAt = before.CollectedAt.Add(time.Second)
+	before.Coverage = append(before.Coverage, Coverage{Section: "os", Status: "error"})
+	after.Coverage = append(after.Coverage, Coverage{Section: "os", Status: "complete"})
+	after.OS = OS{Family: "windows", Name: "Windows", Version: "10.0", Architecture: "x64"}
+	changes, err := Diff(before, after)
+	if err != nil || len(changes) != 1 || changes[0].Type != "observed" {
+		t.Fatal(changes, err)
+	}
+	before.OS = after.OS
+	before.Coverage[1].Status = "complete"
+	after.OS.Version = "11.0"
+	changes, err = Diff(before, after)
+	if err != nil || len(changes) != 1 || changes[0].Type != "changed" {
+		t.Fatal(changes, err)
+	}
+	after.Coverage[1].Status = "partial"
+	after.OS.Version = ""
+	changes, err = Diff(before, after)
+	if err != nil || len(changes) != 1 || changes[0].Type != "observed" {
+		t.Fatal(changes, err)
+	}
+}

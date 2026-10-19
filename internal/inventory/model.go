@@ -177,7 +177,11 @@ func Diff(before, after Snapshot) ([]Change, error) {
 	}
 	changes := []Change{}
 	if (after.CoverageStatus("os") == "complete" || after.CoverageStatus("os") == "partial") && !reflect.DeepEqual(before.OS, after.OS) {
-		changes = append(changes, Change{Section: "os", ID: "os", Type: "changed", Before: raw(before.OS), After: raw(after.OS)})
+		kind := "observed"
+		if before.CoverageStatus("os") == "complete" && after.CoverageStatus("os") == "complete" {
+			kind = "changed"
+		}
+		changes = append(changes, Change{Section: "os", ID: "os", Type: kind, Before: raw(before.OS), After: raw(after.OS)})
 	}
 	type item struct {
 		scope string
