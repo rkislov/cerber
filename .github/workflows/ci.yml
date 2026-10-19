@@ -32,6 +32,11 @@ jobs:
           cache: true
       - run: go mod verify
       - run: go test ./...
+      - name: Native Linux package inventory and cached APT candidates
+        if: runner.os == 'Linux'
+        env:
+          CERBER_NATIVE_SMOKE: '1'
+        run: go test ./internal/collector/linux -run TestNativeLinuxInventory -count=1 -v
       - run: go vet ./...
       - name: Race detection
         if: runner.os == 'Linux'

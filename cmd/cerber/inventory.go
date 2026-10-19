@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/rkislov/cerber/internal/app"
+	linuxcollector "github.com/rkislov/cerber/internal/collector/linux"
 	"github.com/rkislov/cerber/internal/collector/windows"
 	"github.com/rkislov/cerber/internal/inventory"
 	"github.com/rkislov/cerber/internal/storage/sqlite"
 	"github.com/rkislov/cerber/internal/updates/microsoft"
 	"io"
 	"os"
+	"runtime"
 )
 
 func inventoryCommand(ctx context.Context, store *sqlite.Store, args []string, out, errOut io.Writer) error {
@@ -55,12 +57,28 @@ func inventoryCommand(ctx context.Context, store *sqlite.Store, args []string, o
 		}
 	case "inventory collect-local":
 		asset := f.String("asset", "", "local asset ID")
+		packages := f.Bool("check-package-updates", false, "query native Linux package update candidates")
+		refresh := f.Bool("refresh-package-metadata", false, "refresh configured repository metadata; requires package update checking")
+		manager := f.String("package-manager", "auto", "auto, apt, apt-rpm, dnf or yum")
 		online := f.Bool("check-windows-updates", false, "query configured Windows update service online; no downloads or installs")
 		if err := parse(f, args[2:]); err != nil {
 			return err
 		}
 		var err error
-		result, err = service.CollectLocal(ctx, *asset, windows.Collector{CheckAvailable: *online})
+		switch runtime.GOOS {
+		case "windows":
+			if *packages || *refresh || *manager != "auto" {
+				return fmt.Errorf("Linux package flags require Linux")
+			}
+			result, err = service.CollectLocal(ctx, *asset, windows.Collector{CheckAvailable: *online})
+		case "linux":
+			if *online {
+				return fmt.Errorf("Windows update flag requires Windows")
+			}
+			result, err = service.CollectLocal(ctx, *asset, linuxcollector.Collector{CheckAvailable: *packages, RefreshMetadata: *refresh, Manager: *manager})
+		default:
+			return fmt.Errorf("local inventory supports Windows and Linux")
+		}
 		if err != nil {
 			return err
 		}
