@@ -1,0 +1,55 @@
+name: Go CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            binary: cerber
+          - runner: ubuntu-22.04-arm
+            binary: cerber
+          - runner: windows-2022
+            binary: cerber.exe
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.9'
+          cache: true
+      - run: go mod verify
+      - run: go test ./...
+      - run: go vet ./...
+      - name: Race detection
+        if: runner.os == 'Linux'
+        run: go test -race ./...
+      - name: Build without CGO
+        env:
+          CGO_ENABLED: '0'
+        run: go build -trimpath -o bin/${{ matrix.binary }} ./cmd/cerber
+      - name: CLI smoke test
+        run: ./bin/${{ matrix.binary }} -db smoke.db asset add -ip 127.0.0.1 -name smoke
+
+  vulnerabilities:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.9'
+          cache: true
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
