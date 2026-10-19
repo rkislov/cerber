@@ -75,7 +75,8 @@ func TestHTTPDeliveryOwnershipAndIdempotency(t *testing.T) {
 			}
 			before, _ := s.Events(ctx, 0, 100)
 			var wg sync.WaitGroup
-			for i := 0; i < 8; i++ {
+			// Keep retries below the receiver concurrency bound; 429 is valid above it.
+			for i := 0; i < 3; i++ {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
