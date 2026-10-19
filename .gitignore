@@ -17,3 +17,12 @@ target/
 .DS_Store
 .idea/
 .vscode/
+
+# Go binaries, local databases and test artifacts
+/bin/
+/cerber
+/cerber.exe
+/coverage.out
+*.db
+*.db-shm
+*.db-wal
