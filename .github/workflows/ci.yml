@@ -39,6 +39,11 @@ jobs:
         run: |
           go test ./internal/collector/linux -run TestNativeLinuxInventory -count=1 -v
           go test ./cmd/cerber -run TestNativeLinuxAgent -count=1 -v
+      - name: Native Windows inventory and agent delivery
+        if: runner.os == 'Windows'
+        env:
+          CERBER_NATIVE_SMOKE: '1'
+        run: go test ./cmd/cerber -run TestNativeWindowsAgent -count=1 -v
       - run: go vet ./...
       - name: Race detection
         if: runner.os == 'Linux'
