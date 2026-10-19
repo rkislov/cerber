@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -145,5 +147,64 @@ func TestUpstreamRejectsUnsafeURL(t *testing.T) {
 			body.Close()
 			t.Fatalf("accepted %s", raw)
 		}
+	}
+}
+
+func TestKnowledgeServerTLSListener(t *testing.T) {
+	// Reuse httptest's test certificate and trust roots; the server under test is
+	// serveKnowledge itself, not httptest's listener.
+	fixture := httptest.NewTLSServer(http.NotFoundHandler())
+	client := fixture.Client()
+	pair := fixture.TLS.Certificates[0]
+	fixture.Close()
+	root := t.TempDir()
+	cert := filepath.Join(root, "tls.crt")
+	key := filepath.Join(root, "tls.key")
+	if err := os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: pair.Certificate[0]}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := x509.MarshalPKCS8PrivateKey(pair.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(key, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: raw}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(readyWriter, 1)
+	done := make(chan error, 1)
+	go func() { done <- serveKnowledge(ctx, root, "127.0.0.1:0", cert, key, cliTestToken, ready) }()
+	var addr string
+	select {
+	case line := <-ready:
+		addr = strings.TrimSpace(strings.TrimPrefix(line, "knowledge repository listening on "))
+	case <-time.After(5 * time.Second):
+		t.Fatal("TLS listener did not start")
+	}
+	request, err := http.NewRequest(http.MethodGet, "https://"+addr+"/v1/knowledge/latest", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+cliTestToken)
+	client.Timeout = 5 * time.Second
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	// Empty repository is expected; a successful verified TLS connection and an
+	// authenticated application response prove the loaded certificate is used.
+	if response.StatusCode != http.StatusServiceUnavailable || response.TLS == nil {
+		t.Fatal(response.Status)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("TLS shutdown hung")
 	}
 }
