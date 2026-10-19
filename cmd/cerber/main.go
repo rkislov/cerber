@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/rkislov/cerber/internal/knowledge"
 	"io"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/rkislov/cerber/internal/app"
 	"github.com/rkislov/cerber/internal/domain"
@@ -41,6 +43,12 @@ const usage = `Cerber — прототип сканера на Go
   task run -id ID
   task show -id ID
   events list [-after 0] [-limit 100]
+  knowledge keygen [-dir PATH]
+  knowledge publish (-file XML | -url HTTPS_URL) -version VERSION -private-key FILE [-repo PATH]
+  knowledge serve [-repo PATH] [-listen 127.0.0.1:8787] [-tls-cert FILE -tls-key FILE]
+  knowledge sync -server URL -public-key FILE [-cache PATH] [-offline]
+  task run -id ID -knowledge-server URL -knowledge-key FILE [-knowledge-offline]
+Токен сервера/клиента: переменная окружения CERBER_KNOWLEDGE_TOKEN.
 Результаты — JSON. task run выполняется до завершения; Ctrl+C прерывает задачу.
 Открытый TCP-порт не означает наличие уязвимости.
 `
@@ -76,6 +84,9 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}
 	if len(args) < 2 {
 		return fmt.Errorf("resource and command required\n%s", usage)
+	}
+	if args[0] == "knowledge" {
+		return knowledgeCommand(ctx, args[1:], out, errOut)
 	}
 	command := args[0] + " " + args[1]
 	switch command {
@@ -149,8 +160,29 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		result, err = store.Tasks(ctx)
 	case "task run", "task show":
 		id := f.String("id", "", "task ID")
-		if err = parse(f, args[2:]); err != nil {
-			return err
+		if command == "task run" {
+			server := f.String("knowledge-server", "", "knowledge server origin")
+			pub := f.String("knowledge-key", "", "trusted knowledge public key")
+			cache := f.String("knowledge-cache", ".local/knowledge-cache", "knowledge cache directory")
+			age := f.Duration("knowledge-max-age", 72*time.Hour, "maximum manifest age")
+			offline := f.Bool("knowledge-offline", false, "use explicit offline knowledge cache")
+			if err = parse(f, args[2:]); err != nil {
+				return err
+			}
+			if *server != "" || *pub != "" || *offline {
+				key, err := knowledge.ReadPublicKey(*pub)
+				if err != nil {
+					return err
+				}
+				svc.Knowledge = &knowledge.Provider{URL: *server, Token: os.Getenv("CERBER_KNOWLEDGE_TOKEN"), PublicKey: key, CacheDir: *cache, MaxAge: *age, Offline: *offline}
+			} else if *cache != ".local/knowledge-cache" || *age != 72*time.Hour {
+				return fmt.Errorf("knowledge settings require -knowledge-server or -knowledge-offline, and -knowledge-key")
+			}
+		}
+		if command == "task show" {
+			if err = parse(f, args[2:]); err != nil {
+				return err
+			}
 		}
 		if command == "task run" {
 			if err = svc.Run(ctx, *id); err != nil {
