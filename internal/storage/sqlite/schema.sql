@@ -23,7 +23,8 @@ CREATE TABLE tasks (
  created_at TEXT NOT NULL,
  started_at TEXT,
  finished_at TEXT,
- error TEXT NOT NULL DEFAULT ''
+ error TEXT NOT NULL DEFAULT '',
+ knowledge_snapshot TEXT CHECK(knowledge_snapshot IS NULL OR json_valid(knowledge_snapshot))
 );
 CREATE TABLE observations (
  task_id TEXT NOT NULL REFERENCES tasks(id),

@@ -80,7 +80,9 @@ func TestBoundedConcurrencyAndCancellation(t *testing.T) {
 	finished := make(chan error, 1)
 	var emitted atomic.Int32
 	go func() {
-		finished <- s.Scan(ctx, task(1, 2, 3, 4), func(domain.Observation) error { emitted.Add(1); return nil })
+		input := task(1, 2, 3, 4)
+		input.Config.TimeoutMS = 30000
+		finished <- s.Scan(ctx, input, func(domain.Observation) error { emitted.Add(1); return nil })
 	}()
 	for i := 0; i < 2; i++ {
 		select {

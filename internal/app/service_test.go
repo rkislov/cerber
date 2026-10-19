@@ -205,3 +205,71 @@ func TestConcurrentRunClaimsOnlyOnce(t *testing.T) {
 		t.Fatal(stored, err, calls.Load())
 	}
 }
+
+type knowledgeFunc func(context.Context) (domain.KnowledgeSnapshot, error)
+
+func (f knowledgeFunc) Acquire(ctx context.Context) (domain.KnowledgeSnapshot, error) { return f(ctx) }
+
+func TestKnowledgeSnapshotAcquiredAndPinnedBeforeScan(t *testing.T) {
+	db, svc, task := fixture(t)
+	snapshot := domain.KnowledgeSnapshot{ID: "bdu-bundle", Version: "2026-10-19.1", SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+	called := false
+	svc.Knowledge = knowledgeFunc(func(context.Context) (domain.KnowledgeSnapshot, error) { called = true; return snapshot, nil })
+	svc.Scanner = scannerFunc(func(ctx context.Context, input domain.Task, _ func(domain.Observation) error) error {
+		if !called || input.Knowledge == nil || *input.Knowledge != snapshot || input.Status != domain.Running || input.StartedAt == nil {
+			t.Fatal("snapshot not passed to scanner")
+		}
+		persisted, err := db.Task(ctx, input.ID)
+		if err != nil || persisted.Knowledge == nil || *persisted.Knowledge != snapshot || persisted.Status != domain.Running {
+			t.Fatal(persisted, err)
+		}
+		return errors.New("stop after snapshot check")
+	})
+	if err := svc.Run(context.Background(), task.ID); err == nil {
+		t.Fatal("expected scanner error")
+	}
+	stored, err := db.Task(context.Background(), task.ID)
+	if err != nil || stored.Knowledge == nil || *stored.Knowledge != snapshot {
+		t.Fatal(stored, err)
+	}
+	events, err := db.Events(context.Background(), 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var start map[string]json.RawMessage
+	if err = json.Unmarshal(events[3].Payload, &start); err != nil {
+		t.Fatal(err)
+	}
+	var recorded domain.KnowledgeSnapshot
+	if err = json.Unmarshal(start["knowledge_snapshot"], &recorded); err != nil || recorded != snapshot {
+		t.Fatal(recorded, err)
+	}
+}
+func TestKnowledgeFailureLeavesTaskQueued(t *testing.T) {
+	for _, invalid := range []bool{false, true} {
+		t.Run(map[bool]string{false: "offline", true: "invalid manifest"}[invalid], func(t *testing.T) {
+			db, svc, task := fixture(t)
+			svc.Knowledge = knowledgeFunc(func(context.Context) (domain.KnowledgeSnapshot, error) {
+				if invalid {
+					return domain.KnowledgeSnapshot{}, nil
+				}
+				return domain.KnowledgeSnapshot{}, errors.New("server unavailable")
+			})
+			svc.Scanner = scannerFunc(func(context.Context, domain.Task, func(domain.Observation) error) error {
+				t.Fatal("scan started without knowledge")
+				return nil
+			})
+			if err := svc.Run(context.Background(), task.ID); err == nil {
+				t.Fatal("expected knowledge error")
+			}
+			stored, err := db.Task(context.Background(), task.ID)
+			if err != nil || stored.Status != domain.Queued || stored.Knowledge != nil {
+				t.Fatal(stored, err)
+			}
+			events, err := db.Events(context.Background(), 0, 100)
+			if err != nil || len(events) != 3 {
+				t.Fatal(events, err)
+			}
+		})
+	}
+}

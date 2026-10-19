@@ -82,16 +82,36 @@ const (
 	Interrupted TaskStatus = "interrupted"
 )
 
+// KnowledgeSnapshot identifies an immutable, verified knowledge package.
+// It refers to a package manifest, not a mutable "latest" URL.
+type KnowledgeSnapshot struct {
+	ID      string `json:"id"`
+	Version string `json:"version"`
+	SHA256  string `json:"sha256"`
+}
+
+func (k KnowledgeSnapshot) Validate() error {
+	if strings.TrimSpace(k.ID) == "" || len(k.ID) > 256 || strings.TrimSpace(k.Version) == "" || len(k.Version) > 256 {
+		return fmt.Errorf("knowledge snapshot requires an ID and version")
+	}
+	decoded, err := hex.DecodeString(k.SHA256)
+	if err != nil || len(decoded) != 32 {
+		return fmt.Errorf("knowledge snapshot requires a SHA-256 digest")
+	}
+	return nil
+}
+
 type Task struct {
-	ID         string     `json:"id"`
-	TargetID   string     `json:"target_id"`
-	Hosts      []Host     `json:"hosts"`
-	Config     ScanConfig `json:"config"`
-	Status     TaskStatus `json:"status"`
-	CreatedAt  time.Time  `json:"created_at"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Error      string     `json:"error,omitempty"`
+	Knowledge  *KnowledgeSnapshot `json:"knowledge_snapshot,omitempty"`
+	ID         string             `json:"id"`
+	TargetID   string             `json:"target_id"`
+	Hosts      []Host             `json:"hosts"`
+	Config     ScanConfig         `json:"config"`
+	Status     TaskStatus         `json:"status"`
+	CreatedAt  time.Time          `json:"created_at"`
+	StartedAt  *time.Time         `json:"started_at,omitempty"`
+	FinishedAt *time.Time         `json:"finished_at,omitempty"`
+	Error      string             `json:"error,omitempty"`
 }
 
 type PortState string
