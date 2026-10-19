@@ -19,42 +19,56 @@ type Coverage struct {
 	Detail  string `json:"detail,omitempty"`
 }
 type OS struct {
-	Name         string `json:"name"`
-	Family       string `json:"family"`
-	Version      string `json:"version"`
-	Build        string `json:"build"`
-	Edition      string `json:"edition,omitempty"`
-	Architecture string `json:"architecture"`
+	DistributionID string   `json:"distribution_id,omitempty"`
+	IDLike         []string `json:"id_like,omitempty"`
+	Codename       string   `json:"codename,omitempty"`
+	Kernel         string   `json:"kernel,omitempty"`
+	Name           string   `json:"name"`
+	Family         string   `json:"family"`
+	Version        string   `json:"version"`
+	Build          string   `json:"build"`
+	Edition        string   `json:"edition,omitempty"`
+	Architecture   string   `json:"architecture"`
 }
 type Component struct {
-	State        string `json:"state,omitempty"`
-	ID           string `json:"id"`
-	Kind         string `json:"kind"`
-	Name         string `json:"name"`
-	Version      string `json:"version"`
-	Publisher    string `json:"publisher,omitempty"`
-	Architecture string `json:"architecture,omitempty"`
-	Source       string `json:"source"`
-	ProductKey   string `json:"product_key,omitempty"`
+	VersionScheme     string   `json:"version_scheme,omitempty"`
+	InstalledVersions []string `json:"installed_versions,omitempty"`
+	State             string   `json:"state,omitempty"`
+	ID                string   `json:"id"`
+	Kind              string   `json:"kind"`
+	Name              string   `json:"name"`
+	Version           string   `json:"version"`
+	Publisher         string   `json:"publisher,omitempty"`
+	Architecture      string   `json:"architecture,omitempty"`
+	Source            string   `json:"source"`
+	ProductKey        string   `json:"product_key,omitempty"`
 }
 type Update struct {
-	ID       string   `json:"id"`
-	Revision int      `json:"revision"`
-	Title    string   `json:"title"`
-	KBs      []string `json:"kbs"`
-	State    string   `json:"state"`
-	Source   string   `json:"source"`
+	InstalledVersion  string   `json:"installed_version,omitempty"`
+	InstalledVersions []string `json:"installed_versions,omitempty"`
+	AvailableVersion  string   `json:"available_version,omitempty"`
+	Architecture      string   `json:"architecture,omitempty"`
+	Repository        string   `json:"repository,omitempty"`
+	VersionScheme     string   `json:"version_scheme,omitempty"`
+	ID                string   `json:"id"`
+	Revision          int      `json:"revision"`
+	Title             string   `json:"title"`
+	KBs               []string `json:"kbs"`
+	State             string   `json:"state"`
+	Source            string   `json:"source"`
 }
 type Snapshot struct {
-	SchemaVersion int         `json:"schema_version"`
-	ID            string      `json:"id"`
-	AssetID       string      `json:"asset_id"`
-	CollectedAt   time.Time   `json:"collected_at"`
-	Collector     string      `json:"collector"`
-	OS            OS          `json:"os"`
-	Coverage      []Coverage  `json:"coverage"`
-	Components    []Component `json:"components"`
-	Updates       []Update    `json:"updates"`
+	PackageManager     string      `json:"package_manager,omitempty"`
+	RepositoryMetadata string      `json:"repository_metadata,omitempty"`
+	SchemaVersion      int         `json:"schema_version"`
+	ID                 string      `json:"id"`
+	AssetID            string      `json:"asset_id"`
+	CollectedAt        time.Time   `json:"collected_at"`
+	Collector          string      `json:"collector"`
+	OS                 OS          `json:"os"`
+	Coverage           []Coverage  `json:"coverage"`
+	Components         []Component `json:"components"`
+	Updates            []Update    `json:"updates"`
 }
 
 func section(kind string) string {
@@ -118,10 +132,21 @@ func (s Snapshot) Validate() error {
 	if s.CoverageStatus("os") == "complete" && (!text(s.OS.Name, 512) || !text(s.OS.Version, 256) || !text(s.OS.Architecture, 64)) {
 		return fmt.Errorf("complete OS section requires name, version and architecture")
 	}
+	if len(s.PackageManager) > 64 || len(s.RepositoryMetadata) > 64 || len(s.OS.DistributionID) > 256 || len(s.OS.Codename) > 256 || len(s.OS.Kernel) > 512 || len(s.OS.IDLike) > 32 {
+		return fmt.Errorf("excessive Linux metadata")
+	}
+	for _, v := range s.OS.IDLike {
+		if !text(v, 256) {
+			return fmt.Errorf("invalid OS family")
+		}
+	}
 	ids := map[string]bool{}
 	for _, c := range s.Components {
 		if section(c.Kind) == "" || !text(c.ID, 2048) || !text(c.Name, 1024) || !text(c.Source, 256) || len(c.Version) > 512 || len(c.ProductKey) > 2048 || len(c.Publisher) > 1024 || len(c.Architecture) > 64 || len(c.State) > 64 {
 			return fmt.Errorf("invalid component")
+		}
+		if err := validateVersions(c.VersionScheme, c.InstalledVersions); err != nil {
+			return err
 		}
 		status := s.CoverageStatus(section(c.Kind))
 		if status != "complete" && status != "partial" {
@@ -134,8 +159,14 @@ func (s Snapshot) Validate() error {
 	}
 	ids = map[string]bool{}
 	for _, u := range s.Updates {
+		if err := validateVersions(u.VersionScheme, u.InstalledVersions); err != nil {
+			return err
+		}
+		if len(u.InstalledVersion) > 512 || len(u.AvailableVersion) > 512 || len(u.Architecture) > 64 || len(u.Repository) > 1024 {
+			return fmt.Errorf("excessive package update metadata")
+		}
 		scope := "updates_" + u.State
-		if (u.State != "installed" && u.State != "available") || !text(u.ID, 256) || !text(u.Source, 256) || len(u.Title) > 4096 || u.Revision < 0 || len(u.KBs) > 256 {
+		if (u.State != "installed" && u.State != "available") || !text(u.ID, 2048) || !text(u.Source, 256) || len(u.Title) > 4096 || u.Revision < 0 || len(u.KBs) > 256 {
 			return fmt.Errorf("invalid update record")
 		}
 		status := s.CoverageStatus(scope)
@@ -269,6 +300,23 @@ func (c Check) Validate() error {
 		default:
 			return fmt.Errorf("invalid update availability status")
 		}
+	}
+	return nil
+}
+
+func validateVersions(scheme string, versions []string) error {
+	if scheme != "" && scheme != "rpm" && scheme != "debian" {
+		return fmt.Errorf("unknown version scheme")
+	}
+	if len(versions) > 512 {
+		return fmt.Errorf("too many installed versions")
+	}
+	seen := map[string]bool{}
+	for _, v := range versions {
+		if !text(v, 512) || seen[v] {
+			return fmt.Errorf("invalid installed version set")
+		}
+		seen[v] = true
 	}
 	return nil
 }
