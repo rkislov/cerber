@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -166,7 +167,7 @@ func TestMigratesVersionOneDatabase(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
+	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
 		t.Fatal(version, err)
 	}
 	assets, err := s.Assets(ctx)
@@ -238,5 +239,45 @@ func TestMigratesVersionTwoWithPinnedKnowledge(t *testing.T) {
 	history, err := store.Inventories(ctx, "asset", 10)
 	if err != nil || len(history) != 0 {
 		t.Fatal(history, err)
+	}
+}
+
+func TestMigrateV3PreservesInventory(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v3.db")
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := domain.Asset{ID: "asset", IP: "127.0.0.1", CreatedAt: time.Now().UTC()}
+	e, _ := event.New("asset.created", a.ID, a)
+	if err = s.CreateAsset(ctx, a, e); err != nil {
+		t.Fatal(err)
+	}
+	snap := inventory.Snapshot{SchemaVersion: 1, ID: "pre-existing", AssetID: a.ID, Collector: "v3", CollectedAt: time.Now().UTC(), Coverage: []inventory.Coverage{{Section: "os", Status: "error"}}}
+	e, _ = event.New("inventory.recorded", a.ID, snap)
+	if err = s.SaveInventory(ctx, snap, e); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"DROP TABLE agent_receipts", "DROP TABLE agents", "DROP TABLE agent_queue", "PRAGMA user_version=3"} {
+		if _, err = s.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	s, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got, err := s.Inventory(ctx, snap.ID)
+	if err != nil || got.Collector != "v3" {
+		t.Fatal(got, err)
+	}
+	if err = s.RegisterAgent(ctx, "migrated-agent", a.ID, strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.QueueInventory(ctx, "migrated-agent", snap.ID); err != nil {
+		t.Fatal(err)
 	}
 }

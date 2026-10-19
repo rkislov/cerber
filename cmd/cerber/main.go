@@ -34,6 +34,13 @@ func main() {
 
 const usage = `Cerber — прототип сканера на Go
 Использование: cerber [-db PATH] <ресурс> <команда> [параметры]
+  siem serve [-listen 127.0.0.1:8790] [-tls-cert FILE -tls-key FILE]
+  siem enroll -asset SERVER_ASSET_ID -out CREDENTIALS_FILE
+  siem revoke -agent AGENT_ID
+  agent collect -asset LOCAL_ASSET_ID -credentials FILE [-check-package-updates | -check-windows-updates]
+  agent enqueue -inventory ID -credentials FILE
+  agent flush -credentials FILE -server HTTPS_ORIGIN [-ca-cert FILE]
+  agent run -asset LOCAL_ASSET_ID -credentials FILE -server HTTPS_ORIGIN [-interval 1h] [-ca-cert FILE]
   asset add -ip ADDRESS [-name NAME]
   asset list
   target add -name NAME -assets ID,ID
@@ -97,7 +104,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}
 	command := args[0] + " " + args[1]
 	switch command {
-	case "inventory import", "inventory collect-local", "inventory list", "inventory show", "inventory diff", "updates edge", "updates list", "asset add", "asset list", "target add", "target list", "task create", "task list", "task run", "task show", "events list":
+	case "siem serve", "siem enroll", "siem revoke", "agent collect", "agent enqueue", "agent flush", "agent run", "inventory import", "inventory collect-local", "inventory list", "inventory show", "inventory diff", "updates edge", "updates list", "asset add", "asset list", "target add", "target list", "task create", "task list", "task run", "task show", "events list":
 	default:
 		return fmt.Errorf("unknown command %q", command)
 	}
@@ -119,6 +126,9 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return err
 	}
 	defer store.Close()
+	if args[0] == "siem" || args[0] == "agent" {
+		return centralCommand(ctx, store, args, out, errOut)
+	}
 	if args[0] == "inventory" || args[0] == "updates" {
 		return inventoryCommand(ctx, store, args, out, errOut)
 	}
