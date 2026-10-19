@@ -59,16 +59,23 @@ func (s *Store) init(ctx context.Context) error {
 		if _, err = tx.ExecContext(ctx, schema); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=1"); err != nil {
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=2"); err != nil {
 			return err
 		}
 	case 1:
+		if _, err = tx.ExecContext(ctx, "ALTER TABLE tasks ADD COLUMN knowledge_snapshot TEXT CHECK(knowledge_snapshot IS NULL OR json_valid(knowledge_snapshot))"); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=2"); err != nil {
+			return err
+		}
+	case 2:
 	default:
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
 	return tx.Commit()
 }
-func stamp(t time.Time) string          { return t.UTC().Format(time.RFC3339Nano) }
+func stamp(t time.Time) string          { return t.UTC().Format("2006-01-02T15:04:05.000000000Z") }
 func parse(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano, s) }
 func appendEvent(ctx context.Context, tx *sql.Tx, e event.Envelope) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO outbox(id,schema_version,kind,aggregate_id,source,occurred_at,payload) VALUES(?,?,?,?,?,?,?)`,
@@ -189,15 +196,15 @@ func (s *Store) CreateTask(ctx context.Context, t domain.Task, e event.Envelope)
 	})
 }
 
-const taskColumns = "id,target_id,hosts,config,status,created_at,started_at,finished_at,error"
+const taskColumns = "id,target_id,hosts,config,status,created_at,started_at,finished_at,error,knowledge_snapshot"
 
 type rowScanner interface{ Scan(...any) error }
 
 func readTask(row rowScanner) (domain.Task, error) {
 	var t domain.Task
 	var hosts, config, at string
-	var started, finished sql.NullString
-	err := row.Scan(&t.ID, &t.TargetID, &hosts, &config, &t.Status, &at, &started, &finished, &t.Error)
+	var started, finished, knowledge sql.NullString
+	err := row.Scan(&t.ID, &t.TargetID, &hosts, &config, &t.Status, &at, &started, &finished, &t.Error, &knowledge)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, domain.ErrNotFound
 	}
@@ -209,6 +216,13 @@ func readTask(row rowScanner) (domain.Task, error) {
 	}
 	if err = json.Unmarshal([]byte(config), &t.Config); err != nil {
 		return t, err
+	}
+	if knowledge.Valid {
+		var snapshot domain.KnowledgeSnapshot
+		if err = json.Unmarshal([]byte(knowledge.String), &snapshot); err != nil {
+			return t, err
+		}
+		t.Knowledge = &snapshot
 	}
 	if t.CreatedAt, err = parse(at); err != nil {
 		return t, err
@@ -261,9 +275,20 @@ func changed(result sql.Result, err error) error {
 	}
 	return nil
 }
-func (s *Store) ClaimTask(ctx context.Context, id string, e event.Envelope) error {
+func (s *Store) ClaimTask(ctx context.Context, id string, snapshot *domain.KnowledgeSnapshot, e event.Envelope) error {
+	var knowledge any
+	if snapshot != nil {
+		if err := snapshot.Validate(); err != nil {
+			return err
+		}
+		data, err := json.Marshal(snapshot)
+		if err != nil {
+			return err
+		}
+		knowledge = string(data)
+	}
 	return s.mutate(ctx, e, func(tx *sql.Tx) error {
-		return changed(tx.ExecContext(ctx, `UPDATE tasks SET status='running',started_at=? WHERE id=? AND status='queued'`, stamp(e.OccurredAt), id))
+		return changed(tx.ExecContext(ctx, `UPDATE tasks SET status='running',started_at=?,knowledge_snapshot=? WHERE id=? AND status='queued'`, stamp(e.OccurredAt), knowledge, id))
 	})
 }
 func (s *Store) RecordObservation(ctx context.Context, o domain.Observation, e event.Envelope) error {

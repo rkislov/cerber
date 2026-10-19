@@ -2,8 +2,10 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -56,7 +58,7 @@ func TestConcurrentClaimsAcrossConnections(t *testing.T) {
 			defer wg.Done()
 			<-start
 			e, _ := event.New("task.started", task.ID, nil)
-			results <- s.ClaimTask(ctx, task.ID, e)
+			results <- s.ClaimTask(ctx, task.ID, nil, e)
 		}(s)
 	}
 	close(start)
@@ -89,7 +91,7 @@ func TestObservationRollsBackWhenOutboxFails(t *testing.T) {
 	defer s.Close()
 	task := seed(t, s)
 	e, _ := event.New("task.started", task.ID, nil)
-	if err = s.ClaimTask(ctx, task.ID, e); err != nil {
+	if err = s.ClaimTask(ctx, task.ID, nil, e); err != nil {
 		t.Fatal(err)
 	}
 	o := domain.Observation{TaskID: task.ID, AssetID: "asset", IP: "127.0.0.1", Port: 22, Protocol: "tcp", State: domain.Open, ObservedAt: time.Now().UTC()}
@@ -123,5 +125,59 @@ func TestRejectsFutureSchema(t *testing.T) {
 	if reopened, err := Open(ctx, path); err == nil {
 		reopened.Close()
 		t.Fatal("future schema accepted")
+	}
+}
+
+func TestTimestampSortPreservesChronology(t *testing.T) {
+	base := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	later := base.Add(time.Nanosecond)
+	if stamp(base) >= stamp(later) {
+		t.Fatal("SQL text ordering must preserve timestamp order")
+	}
+	parsed, err := parse(stamp(later))
+	if err != nil || !parsed.Equal(later) {
+		t.Fatal(parsed, err)
+	}
+}
+
+func TestMigratesVersionOneDatabase(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSchema := strings.Replace(schema, ",\n knowledge_snapshot TEXT CHECK(knowledge_snapshot IS NULL OR json_valid(knowledge_snapshot))", "", 1)
+	if strings.Contains(oldSchema, "knowledge_snapshot") {
+		t.Fatal("fixture did not remove new column")
+	}
+	if _, err = db.Exec(oldSchema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("PRAGMA user_version=1"); err != nil {
+		t.Fatal(err)
+	}
+	task := seed(t, &Store{db: db})
+	db.Close()
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var version int
+	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+		t.Fatal(version, err)
+	}
+	assets, err := s.Assets(ctx)
+	if err != nil || len(assets) != 1 || assets[0].ID != "asset" {
+		t.Fatal(assets, err)
+	}
+	e, _ := event.New("task.started", task.ID, nil)
+	if err = s.ClaimTask(ctx, task.ID, nil, e); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.Task(ctx, task.ID)
+	if err != nil || stored.Knowledge != nil {
+		t.Fatal(stored, err)
 	}
 }

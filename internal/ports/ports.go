@@ -19,7 +19,7 @@ type Repository interface {
 	CreateTask(context.Context, domain.Task, event.Envelope) error
 	Task(context.Context, string) (domain.Task, error)
 	Tasks(context.Context) ([]domain.Task, error)
-	ClaimTask(context.Context, string, event.Envelope) error
+	ClaimTask(context.Context, string, *domain.KnowledgeSnapshot, event.Envelope) error
 	RecordObservation(context.Context, domain.Observation, event.Envelope) error
 	FinishTask(context.Context, string, domain.TaskStatus, string, event.Envelope) error
 	Observations(context.Context, string) ([]domain.Observation, error)
@@ -35,4 +35,12 @@ type Scanner interface {
 // own committed cursor. Publication/ack adapters can be added without changing scans.
 type EventReader interface {
 	Events(context.Context, int64, int) ([]event.Envelope, error)
+}
+
+// KnowledgeProvider acquires a local immutable snapshot before a task starts.
+// A server-backed adapter must authenticate the manifest, verify downloaded bytes,
+// publish the cache atomically and enforce freshness/offline policy before returning.
+// Failure leaves the task queued. Implementations must honor ctx.
+type KnowledgeProvider interface {
+	Acquire(context.Context) (domain.KnowledgeSnapshot, error)
 }

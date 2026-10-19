@@ -13,8 +13,9 @@ import (
 )
 
 type Service struct {
-	Repo    ports.Repository
-	Scanner ports.Scanner
+	Repo      ports.Repository
+	Scanner   ports.Scanner
+	Knowledge ports.KnowledgeProvider
 }
 
 func (s Service) AddAsset(ctx context.Context, ip, name string) (domain.Asset, error) {
@@ -97,13 +98,28 @@ func (s Service) Run(ctx context.Context, id string) error {
 	if t.Status != domain.Queued {
 		return fmt.Errorf("task is %s: %w", t.Status, domain.ErrConflict)
 	}
-	e, err := event.New("task.started", id, map[string]any{"task_id": id, "status": domain.Running})
+	var knowledge *domain.KnowledgeSnapshot
+	if s.Knowledge != nil {
+		snapshot, err := s.Knowledge.Acquire(ctx)
+		if err != nil {
+			return fmt.Errorf("acquire knowledge snapshot: %w", err)
+		}
+		if err := snapshot.Validate(); err != nil {
+			return err
+		}
+		knowledge = &snapshot
+	}
+	e, err := event.New("task.started", id, map[string]any{"task_id": id, "status": domain.Running, "knowledge_snapshot": knowledge})
 	if err != nil {
 		return err
 	}
-	if err = s.Repo.ClaimTask(ctx, id, e); err != nil {
+	if err = s.Repo.ClaimTask(ctx, id, knowledge, e); err != nil {
 		return err
 	}
+	t.Knowledge = knowledge
+	t.Status = domain.Running
+	started := e.OccurredAt
+	t.StartedAt = &started
 	scanErr := s.Scanner.Scan(ctx, t, func(o domain.Observation) error {
 		e, err := event.New("scan.port_observed", id, o)
 		if err != nil {
