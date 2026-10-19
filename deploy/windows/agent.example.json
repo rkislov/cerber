@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "database": "C:\\ProgramData\\Cerber\\state\\agent.db",
+  "asset_id": "REPLACE_WITH_LOCAL_ASSET_ID",
+  "credentials": "C:\\ProgramData\\Cerber\\config\\credentials.json",
+  "server": "https://siem.example:8790",
+  "ca_cert": "C:\\ProgramData\\Cerber\\config\\organization-ca.pem",
+  "interval": "1h",
+  "check_windows_updates": true,
+  "check_package_updates": false,
+  "refresh_package_metadata": false,
+  "package_manager": "auto"
+}

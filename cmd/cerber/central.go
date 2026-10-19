@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -23,31 +22,7 @@ import (
 	"time"
 )
 
-func readCredentials(path string) (ingest.Credentials, error) {
-	var c ingest.Credentials
-	f, err := os.Open(path)
-	if err != nil {
-		return c, err
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, 4097))
-	if err != nil {
-		return c, err
-	}
-	if len(data) > 4096 {
-		return c, fmt.Errorf("credential file exceeds 4 KiB")
-	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	if err = d.Decode(&c); err != nil {
-		return c, fmt.Errorf("invalid credential file")
-	}
-	var extra any
-	if d.Decode(&extra) != io.EOF {
-		return c, fmt.Errorf("trailing credential data")
-	}
-	return c, c.Validate()
-}
+func readCredentials(path string) (ingest.Credentials, error) { return agent.LoadCredentials(path) }
 func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out, errOut io.Writer) error {
 	command := args[0] + " " + args[1]
 	f := flags(command, errOut)
