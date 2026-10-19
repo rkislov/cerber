@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/rkislov/cerber/internal/domain"
@@ -43,7 +44,7 @@ func (m Manifest) validate() error {
 	if m.SchemaVersion != 1 || m.Sequence == 0 || m.PublishedAt.IsZero() || m.Format != "bdu-xml" {
 		return fmt.Errorf("unsupported or incomplete knowledge manifest")
 	}
-	if !versionPattern.MatchString(m.Snapshot.Version) || m.Snapshot.ID != "bdu-"+m.Snapshot.Version {
+	if !validVersion(m.Snapshot.Version) || m.Snapshot.ID != "bdu-"+m.Snapshot.Version {
 		return fmt.Errorf("invalid package identity")
 	}
 	if m.Size < 1 || m.Size > MaxPackageBytes {
@@ -154,4 +155,21 @@ func digest(data []byte) string { h := sha256.Sum256(data); return hex.EncodeToS
 
 func newSnapshot(version, hash string) domain.KnowledgeSnapshot {
 	return domain.KnowledgeSnapshot{ID: "bdu-" + version, Version: version, SHA256: hash}
+}
+
+// Reject Windows device names on every platform so a Linux publisher cannot
+// produce an otherwise valid package that Windows clients cannot cache.
+func validVersion(version string) bool {
+	if !versionPattern.MatchString(version) {
+		return false
+	}
+	base := strings.ToUpper(strings.SplitN(version, ".", 2)[0])
+	switch base {
+	case "CON", "PRN", "AUX", "NUL":
+		return false
+	}
+	if len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && base[3] >= '1' && base[3] <= '9' {
+		return false
+	}
+	return true
 }

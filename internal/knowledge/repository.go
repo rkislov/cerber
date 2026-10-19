@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -32,7 +33,7 @@ func (r Repository) Latest() ([]byte, error) {
 // not an assertion that FSTEC signed the upstream XML.
 func (r Repository) Publish(ctx context.Context, input io.Reader, version, source string, key ed25519.PrivateKey) (Manifest, error) {
 	var empty Manifest
-	if r.Root == "" || !versionPattern.MatchString(version) || len(key) != ed25519.PrivateKeySize {
+	if r.Root == "" || !validVersion(version) || len(key) != ed25519.PrivateKeySize {
 		return empty, fmt.Errorf("valid version and signing key required")
 	}
 	if err := os.MkdirAll(filepath.Join(r.Root, "packages"), 0700); err != nil {
@@ -46,6 +47,16 @@ func (r Repository) Publish(ctx context.Context, input io.Reader, version, sourc
 		return empty, err
 	}
 	defer unlock()
+	// Versions are unique ignoring case, matching Windows filesystem semantics.
+	entries, err := os.ReadDir(filepath.Join(r.Root, "releases"))
+	if err != nil {
+		return empty, err
+	}
+	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), version+".json") {
+			return empty, fmt.Errorf("version already published")
+		}
+	}
 	release := filepath.Join(r.Root, "releases", version+".json")
 	if _, err := os.Stat(release); !os.IsNotExist(err) {
 		return empty, fmt.Errorf("version already published or inaccessible")
