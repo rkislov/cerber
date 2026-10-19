@@ -54,6 +54,18 @@ jobs:
         run: go build -trimpath -o bin/${{ matrix.binary }} ./cmd/cerber
       - name: CLI smoke test
         run: ./bin/${{ matrix.binary }} -db smoke.db asset add -ip 127.0.0.1 -name smoke
+      - name: systemd lifecycle and durable queue
+        if: runner.os == 'Linux'
+        run: |
+          go test -c -o bin/cerber-service.test ./cmd/cerber
+          cd cmd/cerber
+          sudo env CERBER_SERVICE_SMOKE=1 CERBER_SERVICE_BINARY="$GITHUB_WORKSPACE/bin/cerber" "$GITHUB_WORKSPACE/bin/cerber-service.test" -test.run '^TestSystemdServiceLifecycle$' -test.v -test.timeout 180s
+      - name: Windows SCM lifecycle and durable queue
+        if: runner.os == 'Windows'
+        env:
+          CERBER_SERVICE_SMOKE: '1'
+          CERBER_SERVICE_BINARY: ${{ github.workspace }}\bin\cerber.exe
+        run: go test ./cmd/cerber -run '^TestWindowsServiceLifecycle$' -count=1 -v -timeout 180s
 
   vulnerabilities:
     runs-on: ubuntu-22.04

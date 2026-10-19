@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "database": "/var/lib/cerber/agent.db",
+  "asset_id": "REPLACE_WITH_LOCAL_ASSET_ID",
+  "credentials": "/etc/cerber/credentials.json",
+  "server": "https://siem.example:8790",
+  "ca_cert": "/etc/cerber/organization-ca.pem",
+  "interval": "1h",
+  "check_windows_updates": false,
+  "check_package_updates": true,
+  "refresh_package_metadata": false,
+  "package_manager": "auto"
+}

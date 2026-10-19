@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rkislov/cerber/internal/agent"
 	"github.com/rkislov/cerber/internal/app"
 	"github.com/rkislov/cerber/internal/domain"
 	"github.com/rkislov/cerber/internal/scanner/tcp"
@@ -24,6 +25,14 @@ import (
 )
 
 func main() {
+	if handled, err := runService(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "cerber:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -40,6 +49,9 @@ const usage = `Cerber — прототип сканера на Go
   agent collect -asset LOCAL_ASSET_ID -credentials FILE [-check-package-updates | -check-windows-updates]
   agent enqueue -inventory ID -credentials FILE
   agent flush -credentials FILE -server HTTPS_ORIGIN [-ca-cert FILE]
+  agent validate-config -config ABSOLUTE_FILE
+  agent run -config ABSOLUTE_FILE
+  agent service-run -config ABSOLUTE_FILE (Windows SCM only)
   agent run -asset LOCAL_ASSET_ID -credentials FILE -server HTTPS_ORIGIN [-interval 1h] [-ca-cert FILE]
   asset add -ip ADDRESS [-name NAME]
   asset list
@@ -98,6 +110,27 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}
 	if len(args) < 2 {
 		return fmt.Errorf("resource and command required\n%s", usage)
+	}
+	if args[0] == "agent" && (args[1] == "validate-config" || args[1] == "run" && len(args) > 2 && (args[2] == "-config" || strings.HasPrefix(args[2], "-config="))) {
+		if root.NFlag() != 0 {
+			return fmt.Errorf("-db cannot override an agent config")
+		}
+		f := flags("agent config", errOut)
+		path := f.String("config", "", "absolute agent config JSON path")
+		if err := parse(f, args[2:]); err != nil {
+			return err
+		}
+		c, err := agent.LoadConfig(*path)
+		if err != nil {
+			return err
+		}
+		if err = c.ValidateInputs(); err != nil {
+			return err
+		}
+		if args[1] == "validate-config" {
+			return json.NewEncoder(out).Encode(map[string]bool{"valid": true})
+		}
+		return run(ctx, c.Args(), out, errOut)
 	}
 	if args[0] == "knowledge" {
 		return knowledgeCommand(ctx, args[1:], out, errOut)
