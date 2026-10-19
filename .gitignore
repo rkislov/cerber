@@ -1,0 +1,19 @@
+# Private project documents and planning
+.local/
+
+# Build outputs and dependencies
+node_modules/
+dist/
+target/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
