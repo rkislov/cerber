@@ -103,6 +103,17 @@ func serviceFixture(t *testing.T, root, configDir, stateDir string, install, sta
 	start()
 	remoteID := ingest.RemoteID(c.AgentID, "inventory", snap.ID)
 	waitFor(t, 40*time.Second, func() bool { _, e := central.Inventory(ctx, remoteID); return e == nil }, "restart did not deliver queued report")
+	// A server commit precedes the client's durable acknowledgement. Stopping in
+	// that window must retain the report, so wait for local acknowledgement here.
+	probe, e := sqlite.Open(ctx, db)
+	if e != nil {
+		t.Fatal(e)
+	}
+	waitFor(t, 20*time.Second, func() bool {
+		r, e := probe.NextReport(ctx, c.AgentID)
+		return errors.Is(e, domain.ErrNotFound) || e == nil && r.ID != queued.ID
+	}, "agent did not acknowledge receipt locally")
+	probe.Close()
 	stop()
 	local, err = sqlite.Open(ctx, db)
 	if err != nil {
