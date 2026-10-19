@@ -6,6 +6,7 @@ import (
 	"context"
 	"github.com/rkislov/cerber/internal/domain"
 	"github.com/rkislov/cerber/internal/event"
+	"github.com/rkislov/cerber/internal/inventory"
 )
 
 // Repository mutations append their supplied event in the same transaction.
@@ -43,4 +44,16 @@ type EventReader interface {
 // Failure leaves the task queued. Implementations must honor ctx.
 type KnowledgeProvider interface {
 	Acquire(context.Context) (domain.KnowledgeSnapshot, error)
+}
+
+// InventoryStore persists historical observations, not an overwriteable current list.
+type InventoryStore interface {
+	SaveInventory(context.Context, inventory.Snapshot, event.Envelope) error
+	Inventory(context.Context, string) (inventory.Snapshot, error)
+	Inventories(context.Context, string, int) ([]inventory.Summary, error)
+	SaveUpdateCheck(context.Context, inventory.Check, event.Envelope) error
+	UpdateChecks(context.Context, string, int) ([]inventory.Check, error)
+}
+type InventoryCollector interface {
+	Collect(context.Context) (inventory.Snapshot, error)
 }

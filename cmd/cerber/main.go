@@ -43,6 +43,13 @@ const usage = `Cerber — прототип сканера на Go
   task run -id ID
   task show -id ID
   events list [-after 0] [-limit 100]
+  inventory import -asset ID -file snapshot.json
+  inventory collect-local -asset ID [-check-windows-updates]
+  inventory list -asset ID [-limit 10]
+  inventory show -id ID
+  inventory diff -before ID -after ID
+  updates edge -inventory ID -component ID -architecture x64 [-channel Stable]
+  updates list -asset ID
   knowledge keygen [-dir PATH]
   knowledge publish (-file XML | -url HTTPS_URL) -version VERSION -private-key FILE [-repo PATH]
   knowledge serve [-repo PATH] [-listen 127.0.0.1:8787] [-tls-cert FILE -tls-key FILE]
@@ -90,7 +97,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}
 	command := args[0] + " " + args[1]
 	switch command {
-	case "asset add", "asset list", "target add", "target list", "task create", "task list", "task run", "task show", "events list":
+	case "inventory import", "inventory collect-local", "inventory list", "inventory show", "inventory diff", "updates edge", "updates list", "asset add", "asset list", "target add", "target list", "task create", "task list", "task run", "task show", "events list":
 	default:
 		return fmt.Errorf("unknown command %q", command)
 	}
@@ -112,6 +119,9 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return err
 	}
 	defer store.Close()
+	if args[0] == "inventory" || args[0] == "updates" {
+		return inventoryCommand(ctx, store, args, out, errOut)
+	}
 	svc := app.Service{Repo: store, Scanner: tcp.Scanner{}}
 	f := flags(command, errOut)
 	var result any

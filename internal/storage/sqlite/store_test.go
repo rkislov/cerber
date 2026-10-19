@@ -12,6 +12,7 @@ import (
 
 	"github.com/rkislov/cerber/internal/domain"
 	"github.com/rkislov/cerber/internal/event"
+	"github.com/rkislov/cerber/internal/inventory"
 )
 
 func seed(t *testing.T, s *Store) domain.Task {
@@ -165,7 +166,7 @@ func TestMigratesVersionOneDatabase(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
 		t.Fatal(version, err)
 	}
 	assets, err := s.Assets(ctx)
@@ -179,5 +180,63 @@ func TestMigratesVersionOneDatabase(t *testing.T) {
 	stored, err := s.Task(ctx, task.ID)
 	if err != nil || stored.Knowledge != nil {
 		t.Fatal(stored, err)
+	}
+}
+
+func TestInventoryAndOutboxRollbackTogether(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	seed(t, store)
+	previous, err := store.Events(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := inventory.Snapshot{SchemaVersion: 1, ID: "inventory", AssetID: "asset", Collector: "test", CollectedAt: time.Now().UTC(), Coverage: []inventory.Coverage{{Section: "os", Status: "error"}}}
+	if err = store.SaveInventory(ctx, snapshot, previous[0]); err == nil {
+		t.Fatal("duplicate event accepted")
+	}
+	if _, err = store.Inventory(ctx, snapshot.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatal("snapshot survived rollback", err)
+	}
+	valid, _ := event.New("inventory.recorded", "asset", nil)
+	snapshot.AssetID = "missing"
+	if err = store.SaveInventory(ctx, snapshot, valid); err == nil {
+		t.Fatal("unknown asset accepted")
+	}
+}
+func TestMigratesVersionTwoWithPinnedKnowledge(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(schema); err != nil {
+		t.Fatal(err)
+	}
+	task := seed(t, &Store{db: db})
+	if _, err = db.Exec(`UPDATE tasks SET knowledge_snapshot='{"id":"bdu-v1","version":"v1","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}' WHERE id=?`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("PRAGMA user_version=2"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	stored, err := store.Task(ctx, task.ID)
+	if err != nil || stored.Knowledge == nil || stored.Knowledge.ID != "bdu-v1" {
+		t.Fatal(stored, err)
+	}
+	history, err := store.Inventories(ctx, "asset", 10)
+	if err != nil || len(history) != 0 {
+		t.Fatal(history, err)
 	}
 }

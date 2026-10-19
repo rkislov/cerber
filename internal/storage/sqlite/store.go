@@ -19,6 +19,9 @@ import (
 //go:embed schema.sql
 var schema string
 
+//go:embed inventory.sql
+var inventorySchema string
+
 type Store struct{ db *sql.DB }
 
 var _ ports.Repository = (*Store)(nil)
@@ -59,19 +62,28 @@ func (s *Store) init(ctx context.Context) error {
 		if _, err = tx.ExecContext(ctx, schema); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=2"); err != nil {
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=3"); err != nil {
 			return err
 		}
 	case 1:
 		if _, err = tx.ExecContext(ctx, "ALTER TABLE tasks ADD COLUMN knowledge_snapshot TEXT CHECK(knowledge_snapshot IS NULL OR json_valid(knowledge_snapshot))"); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=2"); err != nil {
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=3"); err != nil {
 			return err
 		}
 	case 2:
+	case 3:
 	default:
 		return fmt.Errorf("unsupported database schema version %d", version)
+	}
+	if version < 3 {
+		if _, err = tx.ExecContext(ctx, inventorySchema); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=3"); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
