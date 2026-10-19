@@ -395,3 +395,18 @@ func TestPublisherPreservesUTF8BOM(t *testing.T) {
 		t.Fatal("source bytes changed", err)
 	}
 }
+
+func TestVersionNamesPortableAcrossPlatforms(t *testing.T) {
+	repo, _, key, _ := setup(t)
+	for _, version := range []string{"CON", "con.1", "PRN.xml", "NUL", "AUX.1", "COM1", "lpt9.2", "../escape", "v/2"} {
+		if _, err := repo.Publish(context.Background(), strings.NewReader(`<x/>`), version, "test", key); err == nil {
+			t.Fatalf("nonportable version accepted: %s", version)
+		}
+	}
+	if _, err := repo.Publish(context.Background(), strings.NewReader(`<x/>`), "Release.1", "test", key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Publish(context.Background(), strings.NewReader(`<x/>`), "release.1", "test", key); err == nil {
+		t.Fatal("case-only version reuse accepted")
+	}
+}
