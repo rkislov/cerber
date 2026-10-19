@@ -78,9 +78,11 @@ func TestCentralCLIEnrollmentAndDelivery(t *testing.T) {
 	call(central, "siem", "revoke", "-agent", c.AgentID)
 }
 
-func TestNativeLinuxAgent(t *testing.T) {
-	if runtime.GOOS != "linux" || os.Getenv("CERBER_NATIVE_SMOKE") != "1" {
-		t.Skip("native Linux CI smoke")
+func TestNativeLinuxAgent(t *testing.T)   { nativeAgent(t, "linux") }
+func TestNativeWindowsAgent(t *testing.T) { nativeAgent(t, "windows") }
+func nativeAgent(t *testing.T, family string) {
+	if runtime.GOOS != family || os.Getenv("CERBER_NATIVE_SMOKE") != "1" {
+		t.Skip("native platform CI smoke")
 	}
 	root := t.TempDir()
 	ctx := context.Background()
@@ -114,7 +116,11 @@ func TestNativeLinuxAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if err = run(ctx, []string{"-db", db, "agent", "collect", "-asset", local["id"].(string), "-credentials", file, "-check-package-updates"}, &out, &diagnostics); err != nil {
+	collectArgs := []string{"-db", db, "agent", "collect", "-asset", local["id"].(string), "-credentials", file}
+	if family == "linux" {
+		collectArgs = append(collectArgs, "-check-package-updates")
+	}
+	if err = run(ctx, collectArgs, &out, &diagnostics); err != nil {
 		t.Fatal(err, diagnostics.String())
 	}
 	if err = run(ctx, []string{"-db", db, "agent", "flush", "-credentials", file, "-server", server.URL}, &out, &diagnostics); err != nil {
@@ -125,7 +131,13 @@ func TestNativeLinuxAgent(t *testing.T) {
 		t.Fatal(history, err)
 	}
 	s, err := central.Inventory(ctx, history[0].ID)
-	if err != nil || s.CoverageStatus("packages") != "complete" || s.CoverageStatus("updates_available") != "partial" || len(s.Components) == 0 {
+	if err != nil || s.OS.Family != family || len(s.Components) == 0 {
 		t.Fatal(s.Coverage, err)
+	}
+	if family == "linux" && (s.CoverageStatus("packages") != "complete" || s.CoverageStatus("updates_available") != "partial") {
+		t.Fatal(s.Coverage)
+	}
+	if family == "windows" && (s.CoverageStatus("os") != "complete" || s.CoverageStatus("updates_available") != "not_requested") {
+		t.Fatal(s.Coverage)
 	}
 }
