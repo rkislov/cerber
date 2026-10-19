@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -147,11 +147,11 @@ func TestMigratesVersionOneDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldSchema := strings.Replace(schema, ",\n knowledge_snapshot TEXT CHECK(knowledge_snapshot IS NULL OR json_valid(knowledge_snapshot))", "", 1)
-	if strings.Contains(oldSchema, "knowledge_snapshot") {
-		t.Fatal("fixture did not remove new column")
+	oldSchema, err := os.ReadFile(filepath.Join("testdata", "schema_v1.sql"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err = db.Exec(oldSchema); err != nil {
+	if _, err = db.Exec(string(oldSchema)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec("PRAGMA user_version=1"); err != nil {
