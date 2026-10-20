@@ -5,12 +5,19 @@ import (
 	"context"
 	"errors"
 	"github.com/rkislov/cerber/internal/correlation"
+	"github.com/rkislov/cerber/internal/incidents"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"net/http"
+	"time"
 )
 
 type EventStore interface {
 	telemetry.Reader
+	Incident(context.Context, string) (incidents.Card, error)
+	Incidents(context.Context, int64, string, string, string, int) ([]incidents.Card, error)
+	IncidentCommand(context.Context, incidents.Command, string, time.Time) (incidents.Card, error)
+	IncidentHistory(context.Context, string, int64, int) ([]incidents.Entry, error)
+	IncidentDetections(context.Context, string, int64, int) ([]telemetry.Detection, error)
 	Acknowledge(context.Context, string, string) error
 }
 

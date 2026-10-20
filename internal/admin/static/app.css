@@ -8,3 +8,6 @@
 
 #oidc-login{display:block;text-align:center;text-decoration:none;margin-top:14px}#oidc-login.hidden{display:none}
 #rule-dialog{width:min(920px,calc(100vw - 32px))}#rule-description{padding:8px 24px 24px;max-height:65vh;overflow:auto;line-height:1.6}#rule-description h3{margin:22px 0 8px}#rule-description p{margin:8px 0}#rule-description ol{padding-left:22px}#rule-description a{display:block;overflow-wrap:anywhere}
+.incident-content{padding:16px 24px 24px}.incident-prose{white-space:pre-wrap;overflow-wrap:anywhere}#incident-edit-dialog textarea,#incident-action-form textarea{box-sizing:border-box;width:100%;padding:12px;border:1px solid #dce1e6;border-radius:6px;font:inherit}#incident-edit-form input,#incident-action-form select{max-width:100%}#incident-summary .badge{margin-right:10px}
+
+#incident-action-form,#incident-edit-form{display:grid;gap:12px}#incident-action-form label,#incident-edit-form label{display:grid;gap:8px}#incident-action-form{margin-top:24px}#incident-summary{margin-bottom:20px}#incident-subtitle{overflow-wrap:anywhere}

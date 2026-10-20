@@ -111,7 +111,37 @@ func TestVersionSixAccountMigration(t *testing.T) {
 		t.Fatal(n, err)
 	}
 	var version int
-	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 		t.Fatal(version, err)
+	}
+}
+
+func TestAnalystCannotMutateInfrastructure(t *testing.T) {
+	ctx := context.Background()
+	s, e := Open(ctx, ":memory:")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	hash, e := admin.HashPassword("fixture-only-password")
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, u := range []admin.User{{Username: "root", Role: "administrator"}, {Username: "analyst", Role: "analyst"}} {
+		if e = s.AdminCommand(ctx, admin.Command{Action: "user.create", Username: u.Username, Role: u.Role, PasswordHash: hash}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	u, e := s.AdminUser(ctx, "analyst")
+	if e != nil {
+		t.Fatal(e)
+	}
+	tx, e := s.db.BeginTx(ctx, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer tx.Rollback()
+	if e = checkAdmin(admin.WithPrincipal(ctx, u), tx, false); !errors.Is(e, admin.ErrForbidden) {
+		t.Fatal("analyst inherited operator permissions", e)
 	}
 }
