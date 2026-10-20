@@ -116,11 +116,14 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			return err
 		}
 		return json.NewEncoder(out).Encode(v)
+	case "siem user-add":
+		return adminUserAdd(ctx, store, args[2:], out, errOut)
 	case "siem serve":
 		listen := f.String("listen", "127.0.0.1:8790", "receiver address")
 		cert := f.String("tls-cert", "", "TLS certificate")
 		key := f.String("tls-key", "", "TLS private key")
-		adminKey := f.String("admin-key", "", "optional administrator key JSON file; enables /admin")
+		adminEnabled := f.Bool("admin", false, "enable named-account administration console")
+		adminKey := f.String("admin-key", "", "legacy bootstrap key JSON file; login allowed only before named users exist")
 		offline := f.Duration("offline-after", 15*time.Minute, "automatic offline alert threshold/grace")
 		maxAge := f.Duration("inventory-max-age", 24*time.Hour, "automatic inventory alert threshold/grace")
 		checkEvery := f.Duration("monitor-interval", 30*time.Second, "alert evaluation interval (5s–1h)")
@@ -137,8 +140,12 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		monitor := &alerts.Monitor{Policy: policy, Interval: *checkEvery}
 		mux := http.NewServeMux()
 		mux.Handle("/v1/agent/", ingest.NewHandler(store))
-		if *adminKey != "" {
-			token, err := admin.ReadKey(*adminKey)
+		if *adminKey != "" || *adminEnabled {
+			token := ""
+			var err error
+			if *adminKey != "" {
+				token, err = admin.ReadKey(*adminKey)
+			}
 			if err != nil {
 				return err
 			}

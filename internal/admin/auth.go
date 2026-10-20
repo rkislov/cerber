@@ -62,6 +62,7 @@ func randomToken() (string, error) {
 type session struct {
 	Expires time.Time
 	CSRF    string
+	User    User
 }
 type attempts struct {
 	Since time.Time
@@ -73,10 +74,12 @@ type authentication struct {
 	sessions map[[32]byte]session
 	attempts map[string]attempts
 	secure   bool
+	store    Store
+	workers  chan struct{}
 }
 
-func newAuth(key string, secure bool) *authentication {
-	return &authentication{key: sha256.Sum256([]byte(key)), sessions: map[[32]byte]session{}, attempts: map[string]attempts{}, secure: secure}
+func newAuth(key string, secure bool, store Store) *authentication {
+	return &authentication{key: sha256.Sum256([]byte(key)), sessions: map[[32]byte]session{}, attempts: map[string]attempts{}, secure: secure, store: store, workers: make(chan struct{}, 4)}
 }
 func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -109,14 +112,47 @@ func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
 	a.attempts[host] = bucket
 	a.mu.Unlock()
 	var v struct {
-		Token string `json:"token"`
+		Token    string `json:"token"`
+		Username string `json:"username"`
+		Password string `json:"password"`
 	}
 	if !decodeJSON(w, r, 1024, &v) {
 		return
 	}
-	provided := sha256.Sum256([]byte(v.Token))
-	if subtle.ConstantTimeCompare(provided[:], a.key[:]) != 1 {
+	select {
+	case a.workers <- struct{}{}:
+		defer func() { <-a.workers }()
+	default:
+		http.Error(w, "try later", 429)
+		return
+	}
+	count, err := a.store.AdminUserCount(r.Context())
+	if err != nil {
+		http.Error(w, "authentication unavailable", 503)
+		return
+	}
+	user := User{Role: "administrator"}
+	valid := false
+	if count == 0 && v.Token != "" {
+		provided := sha256.Sum256([]byte(v.Token))
+		valid = subtle.ConstantTimeCompare(provided[:], a.key[:]) == 1
+	} else {
+		u, e := a.store.AdminUser(r.Context(), v.Username)
+		// Equal work for absent users, disabled users and incorrect passwords.
+		hash := "pbkdf2-sha256-600000$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000"
+		if e == nil {
+			hash = u.PasswordHash
+		}
+		valid = CheckPassword(hash, v.Password) && e == nil && !u.Disabled
+		user = u
+	}
+	if !valid {
 		http.Error(w, "unauthorized", 401)
+		return
+	}
+	user.PasswordHash = ""
+	if err = a.store.AdminLogin(r.Context(), user); err != nil {
+		http.Error(w, "authentication unavailable", 503)
 		return
 	}
 	cookie, err := randomToken()
@@ -132,7 +168,7 @@ func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for k, v := range a.sessions {
-		if now.After(v.Expires) {
+		if now.After(v.Expires) || v.User.Username == "" && user.Username != "" {
 			delete(a.sessions, k)
 		}
 	}
@@ -140,8 +176,7 @@ func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session limit reached", 503)
 		return
 	}
-	a.sessions[sha256.Sum256([]byte(cookie))] = session{now.Add(8 * time.Hour), csrf}
-	delete(a.attempts, host)
+	a.sessions[sha256.Sum256([]byte(cookie))] = session{Expires: now.Add(8 * time.Hour), CSRF: csrf, User: user}
 	http.SetCookie(w, &http.Cookie{Name: "cerber_admin", Value: cookie, Path: "/admin", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: 8 * 60 * 60})
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -157,6 +192,22 @@ func (a *authentication) current(r *http.Request) (session, bool) {
 	if ok && time.Now().After(v.Expires) {
 		delete(a.sessions, hash)
 		ok = false
+	}
+	if ok {
+		if v.User.Username == "" {
+			n, e := a.store.AdminUserCount(r.Context())
+			ok = e == nil && n == 0
+		} else {
+			u, e := a.store.AdminUser(r.Context(), v.User.Username)
+			ok = e == nil && !u.Disabled && u.Version == v.User.Version
+			if ok {
+				u.PasswordHash = ""
+				v.User = u
+			}
+		}
+		if !ok {
+			delete(a.sessions, hash)
+		}
 	}
 	return v, ok
 }

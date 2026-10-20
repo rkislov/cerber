@@ -31,6 +31,9 @@ var agentStatusSchema string
 //go:embed alerts.sql
 var alertsSchema string
 
+//go:embed accounts.sql
+var accountsSchema string
+
 type Store struct{ db *sql.DB }
 
 var _ ports.Repository = (*Store)(nil)
@@ -86,6 +89,7 @@ func (s *Store) init(ctx context.Context) error {
 	case 4:
 	case 5:
 	case 6:
+	case 7:
 	default:
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
@@ -121,6 +125,14 @@ func (s *Store) init(ctx context.Context) error {
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=6"); err != nil {
+			return err
+		}
+	}
+	if version < 7 {
+		if _, err = tx.ExecContext(ctx, accountsSchema); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=7"); err != nil {
 			return err
 		}
 	}

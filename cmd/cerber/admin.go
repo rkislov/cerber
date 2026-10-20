@@ -2,13 +2,17 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/rkislov/cerber/internal/admin"
+	"github.com/rkislov/cerber/internal/storage/sqlite"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func adminKeygen(args []string, out, errOut io.Writer) error {
@@ -45,4 +49,37 @@ func adminKeygen(args []string, out, errOut io.Writer) error {
 		return err
 	}
 	return json.NewEncoder(out).Encode(map[string]string{"administrator_key_file": *file})
+}
+
+func adminUserAdd(ctx context.Context, store *sqlite.Store, args []string, out, errOut io.Writer) error {
+	f := flags("siem user-add", errOut)
+	name := f.String("username", "", "unique lowercase username")
+	role := f.String("role", "viewer", "administrator, operator or viewer")
+	file := f.String("password-file", "", "private UTF-8 password file (12–256 bytes)")
+	if err := parse(f, args); err != nil {
+		return err
+	}
+	if *file == "" {
+		return fmt.Errorf("password file required")
+	}
+	source, err := os.Open(*file)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	data, err := io.ReadAll(io.LimitReader(source, 259))
+	if err != nil {
+		return err
+	}
+	if len(data) > 258 {
+		return fmt.Errorf("password file too large")
+	}
+	hash, err := admin.HashPassword(strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r"))
+	if err != nil {
+		return err
+	}
+	if err = store.AdminCommand(ctx, admin.Command{Action: "user.create", Username: *name, Role: *role, PasswordHash: hash}); err != nil {
+		return err
+	}
+	return json.NewEncoder(out).Encode(map[string]string{"username": *name, "role": *role})
 }

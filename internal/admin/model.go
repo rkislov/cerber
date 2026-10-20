@@ -32,6 +32,11 @@ type InventoryPage struct {
 	Items              []json.RawMessage `json:"items"`
 }
 type Store interface {
+	AdminLogin(context.Context, User) error
+	AdminUser(context.Context, string) (User, error)
+	AdminUserCount(context.Context) (int, error)
+	AdminUsers(context.Context, string, int) ([]User, error)
+	AdminCommand(context.Context, Command) error
 	AdminOverview(context.Context, time.Time, alerts.Policy) (Overview, error)
 	AgentStatuses(context.Context, string, string, int) ([]ingest.AgentStatus, error)
 	Alerts(context.Context, string, int64, int) ([]alerts.Alert, error)

@@ -28,13 +28,13 @@ type Options struct {
 }
 
 func NewHandler(store Store, key string, options Options) (http.Handler, error) {
-	if !ValidKey(key) {
+	if key != "" && !ValidKey(key) {
 		return nil, errors.New("administrator key must be 32 random bytes encoded as hex")
 	}
 	if err := options.Policy.Validate(); err != nil {
 		return nil, err
 	}
-	auth := newAuth(key, options.SecureCookies)
+	auth := newAuth(key, options.SecureCookies, store)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -103,7 +103,19 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 			return
 		}
 		if path == "/admin/api/session" && r.Method == "GET" {
-			writeJSON(w, map[string]string{"csrf": session.CSRF, "role": "administrator"})
+			writeJSON(w, map[string]string{"csrf": session.CSRF, "role": session.User.Role, "username": session.User.Username})
+			return
+		}
+		r = r.WithContext(WithPrincipal(r.Context(), session.User))
+		if r.Method == "POST" && session.User.Role == "viewer" {
+			http.Error(w, "forbidden", 403)
+			return
+		}
+		if strings.HasPrefix(path, "/admin/api/users") && session.User.Role != "administrator" {
+			http.Error(w, "forbidden", 403)
+			return
+		}
+		if management(store, w, r) {
 			return
 		}
 		switch path {
@@ -197,7 +209,7 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 				http.Error(w, "invalid alert ID", 400)
 				return
 			}
-			item, err := store.AcknowledgeAlert(r.Context(), v.ID, "administrator")
+			item, err := store.AcknowledgeAlert(r.Context(), v.ID, defaultString(session.User.Username, "administrator"))
 			if err != nil {
 				storageError(w, err)
 				return
@@ -265,6 +277,12 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 func storageError(w http.ResponseWriter, err error) {
 	status := 503
+	if errors.Is(err, ErrForbidden) {
+		status = 403
+	}
+	if errors.Is(err, ErrInvalid) {
+		status = 400
+	}
 	if errors.Is(err, domain.ErrNotFound) {
 		status = 404
 	}
