@@ -30,6 +30,8 @@ jobs:
         with:
           go-version: '1.26.9'
           cache: true
+      - name: Check embedded admin JavaScript
+        run: node --check internal/admin/static/app.js
       - run: go mod verify
       - run: go test ./...
       - name: Native Linux package inventory and cached APT candidates

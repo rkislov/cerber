@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/rkislov/cerber/internal/admin"
 	"github.com/rkislov/cerber/internal/agent"
+	"github.com/rkislov/cerber/internal/alerts"
 	"github.com/rkislov/cerber/internal/app"
 	linuxcollector "github.com/rkislov/cerber/internal/collector/linux"
 	"github.com/rkislov/cerber/internal/collector/windows"
@@ -17,6 +19,7 @@ import (
 	"github.com/rkislov/cerber/internal/inventory"
 	"github.com/rkislov/cerber/internal/storage/sqlite"
 	"io"
+	"net/http"
 	"os"
 	"runtime"
 	"sync"
@@ -72,14 +75,88 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			Agents          []ingest.AgentStatus `json:"agents"`
 			Next            string               `json:"next_cursor,omitempty"`
 		}{now, offline.String(), maxAge.String(), agents, next})
+	case "siem alerts":
+		state := f.String("state", "active", "active, resolved or all")
+		before := f.Int64("before", 0, "exclusive sequence cursor")
+		limit := f.Int("limit", 100, "page size (1–1000)")
+		if err := parse(f, args[2:]); err != nil {
+			return err
+		}
+		if *limit < 1 || *limit > 1000 {
+			return fmt.Errorf("invalid page limit")
+		}
+		items, err := store.Alerts(ctx, *state, *before, *limit+1)
+		if err != nil {
+			return err
+		}
+		var next int64
+		if len(items) > *limit {
+			items = items[:*limit]
+			next = items[len(items)-1].Sequence
+		}
+		return json.NewEncoder(out).Encode(map[string]any{"items": items, "next_before": next})
+	case "siem acknowledge":
+		id := f.String("id", "", "alert ID")
+		if err := parse(f, args[2:]); err != nil {
+			return err
+		}
+		v, err := store.AcknowledgeAlert(ctx, *id, "cli")
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(v)
+	case "siem evaluate-alerts":
+		offline := f.Duration("offline-after", 15*time.Minute, "offline grace/threshold")
+		maxAge := f.Duration("inventory-max-age", 24*time.Hour, "inventory grace/threshold")
+		if err := parse(f, args[2:]); err != nil {
+			return err
+		}
+		v, err := store.EvaluateAlerts(ctx, time.Now().UTC(), alerts.Policy{OfflineAfter: *offline, InventoryMaxAge: *maxAge})
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(v)
 	case "siem serve":
 		listen := f.String("listen", "127.0.0.1:8790", "receiver address")
 		cert := f.String("tls-cert", "", "TLS certificate")
 		key := f.String("tls-key", "", "TLS private key")
+		adminKey := f.String("admin-key", "", "optional administrator key JSON file; enables /admin")
+		offline := f.Duration("offline-after", 15*time.Minute, "automatic offline alert threshold/grace")
+		maxAge := f.Duration("inventory-max-age", 24*time.Hour, "automatic inventory alert threshold/grace")
+		checkEvery := f.Duration("monitor-interval", 30*time.Second, "alert evaluation interval (5s–1h)")
 		if err := parse(f, args[2:]); err != nil {
 			return err
 		}
-		return serveHTTP(ctx, ingest.NewHandler(store), *listen, *cert, *key, "SIEM receiver", 2*time.Minute, 2*time.Minute, errOut)
+		policy := alerts.Policy{OfflineAfter: *offline, InventoryMaxAge: *maxAge}
+		if err := policy.Validate(); err != nil {
+			return err
+		}
+		if *checkEvery < 5*time.Second || *checkEvery > time.Hour {
+			return fmt.Errorf("monitor interval must be 5s–1h")
+		}
+		monitor := &alerts.Monitor{Policy: policy, Interval: *checkEvery}
+		mux := http.NewServeMux()
+		mux.Handle("/v1/agent/", ingest.NewHandler(store))
+		if *adminKey != "" {
+			token, err := admin.ReadKey(*adminKey)
+			if err != nil {
+				return err
+			}
+			handler, err := admin.NewHandler(store, token, admin.Options{SecureCookies: *cert != "", Policy: policy, Monitor: monitor.Snapshot})
+			if err != nil {
+				return err
+			}
+			mux.Handle("/admin", handler)
+			mux.Handle("/admin/", handler)
+		}
+		monitorCtx, stop := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			monitor.Run(monitorCtx, store, func(err error) { fmt.Fprintf(errOut, "alert monitor: %v\n", err) })
+		}()
+		defer func() { stop(); <-done }()
+		return serveHTTP(ctx, mux, *listen, *cert, *key, "SIEM receiver", 2*time.Minute, 2*time.Minute, errOut)
 	case "siem enroll":
 		asset := f.String("asset", "", "server asset ID")
 		file := f.String("out", "", "new credentials file; copy securely to agent")

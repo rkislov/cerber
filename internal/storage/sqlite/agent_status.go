@@ -133,15 +133,23 @@ func (s *Store) AcceptHeartbeat(ctx context.Context, id, hash string, h ingest.H
 	}
 	return receipt, tx.Commit()
 }
+
+type rowsQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
 func (s *Store) AgentStatuses(ctx context.Context, asset, after string, limit int) ([]ingest.AgentStatus, error) {
+	return agentStatuses(ctx, s.db, asset, after, limit)
+}
+func agentStatuses(ctx context.Context, q rowsQuerier, asset, after string, limit int) ([]ingest.AgentStatus, error) {
 	if limit < 1 || limit > 1001 {
 		return nil, fmt.Errorf("agent limit must be 1–1001")
 	}
 	if after != "" && !ingest.Identifier(after) {
 		return nil, fmt.Errorf("invalid agent cursor")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id,a.asset_id,a.created_at,a.revoked,s.last_seen_at,s.last_report_at,s.latest_inventory_at,s.latest_inventory_id,h.received_at,h.payload
- FROM agents a LEFT JOIN agent_status s ON s.agent_id=a.id LEFT JOIN agent_heartbeats h ON h.agent_id=a.id
+	rows, err := q.QueryContext(ctx, `SELECT a.id,a.asset_id,a.created_at,a.revoked,s.last_seen_at,s.last_report_at,s.latest_inventory_at,s.latest_inventory_id,h.received_at,h.payload,assets.name,assets.ip
+ FROM agents a JOIN assets ON assets.id=a.asset_id LEFT JOIN agent_status s ON s.agent_id=a.id LEFT JOIN agent_heartbeats h ON h.agent_id=a.id
  WHERE a.id>? AND (?='' OR a.asset_id=?) ORDER BY a.id LIMIT ?`, after, asset, asset, limit)
 	if err != nil {
 		return nil, err
@@ -152,7 +160,7 @@ func (s *Store) AgentStatuses(ctx context.Context, asset, after string, limit in
 		var v ingest.AgentStatus
 		var created string
 		var seen, report, inventoryAt, inventoryID, heartbeat, payload sql.NullString
-		if err = rows.Scan(&v.AgentID, &v.AssetID, &created, &v.Revoked, &seen, &report, &inventoryAt, &inventoryID, &heartbeat, &payload); err != nil {
+		if err = rows.Scan(&v.AgentID, &v.AssetID, &created, &v.Revoked, &seen, &report, &inventoryAt, &inventoryID, &heartbeat, &payload, &v.AssetName, &v.AssetIP); err != nil {
 			return nil, err
 		}
 		if v.CreatedAt, err = parse(created); err != nil {
