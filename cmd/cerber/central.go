@@ -15,6 +15,8 @@ import (
 	linuxcollector "github.com/rkislov/cerber/internal/collector/linux"
 	"github.com/rkislov/cerber/internal/collector/windows"
 	"github.com/rkislov/cerber/internal/domain"
+	"github.com/rkislov/cerber/internal/eventcollector"
+	"github.com/rkislov/cerber/internal/eventstore"
 	"github.com/rkislov/cerber/internal/ingest"
 	"github.com/rkislov/cerber/internal/inventory"
 	"github.com/rkislov/cerber/internal/jobs"
@@ -23,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -120,6 +123,8 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 	case "siem user-add":
 		return adminUserAdd(ctx, store, args[2:], out, errOut)
 	case "siem serve":
+		eventsDB := f.String("events-db", "", "separate security event journal database; disabled if omitted")
+		directoryConfig := f.String("directory-config", "", "optional LDAPS configuration JSON")
 		listen := f.String("listen", "127.0.0.1:8790", "receiver address")
 		cert := f.String("tls-cert", "", "TLS certificate")
 		key := f.String("tls-key", "", "TLS private key")
@@ -142,6 +147,33 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		monitor := &alerts.Monitor{Policy: policy, Interval: *checkEvery}
 		mux := http.NewServeMux()
 		mux.Handle("/v1/agent/", ingest.NewHandler(store))
+		var eventDB *eventstore.Store
+		var eventReader admin.EventStore
+		if *eventsDB != "" {
+			if err := separateEventDatabase(*eventsDB, store.Path()); err != nil {
+				return err
+			}
+			var err error
+			eventDB, err = eventstore.Open(ctx, *eventsDB)
+			if err != nil {
+				return err
+			}
+			defer eventDB.Close()
+			eventReader = eventDB
+			mux.Handle("/v1/agent/events", ingest.NewEventHandler(store, eventDB))
+		}
+		var directory admin.Directory
+		if *directoryConfig != "" {
+			var err error
+			directory, err = admin.LoadDirectory(*directoryConfig)
+			if err != nil {
+				return err
+			}
+			if !*adminEnabled && *adminKey == "" {
+				return fmt.Errorf("directory config requires admin console")
+			}
+		}
+
 		if *adminKey != "" || *adminEnabled {
 			token := ""
 			var err error
@@ -151,7 +183,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			if err != nil {
 				return err
 			}
-			handler, err := admin.NewHandler(store, token, admin.Options{SecureCookies: *cert != "", Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot})
+			handler, err := admin.NewHandler(store, token, admin.Options{SecureCookies: *cert != "", Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory})
 			if err != nil {
 				return err
 			}
@@ -170,7 +202,14 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			monitor.Run(monitorCtx, store, func(err error) { fmt.Fprintf(errOut, "alert monitor: %v\n", err) })
 			<-schedulerDone
 		}()
-		defer func() { stop(); <-done }()
+		eventDone := make(chan struct{})
+		go func() {
+			defer close(eventDone)
+			if eventDB != nil {
+				eventDB.Run(monitorCtx, func(err error) { fmt.Fprintf(errOut, "event pipeline: %v\n", err) })
+			}
+		}()
+		defer func() { stop(); <-done; <-eventDone }()
 		return serveHTTP(ctx, mux, *listen, *cert, *key, "SIEM receiver", 2*time.Minute, 2*time.Minute, errOut)
 	case "siem enroll":
 		asset := f.String("asset", "", "server asset ID")
@@ -227,6 +266,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 	packages := f.Bool("check-package-updates", false, "query native Linux package update candidates")
 	refresh := f.Bool("refresh-package-metadata", false, "refresh configured Linux repository metadata")
 	manager := f.String("package-manager", "auto", "Linux package manager")
+	eventSources := f.String("event-sources", "", "opt-in sources: journald or windows:Security,windows:System,windows:Application")
 	heartbeat := f.Duration("heartbeat-interval", time.Minute, "heartbeat interval for run (1m–1h)")
 	interval := f.Duration("interval", time.Hour, "collection interval for run (1m–24h)")
 	if err := parse(f, args[2:]); err != nil {
@@ -246,6 +286,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		if command == "agent run" {
 			allowed["server"] = true
 			allowed["ca-cert"] = true
+			allowed["event-sources"] = true
 			allowed["interval"] = true
 			allowed["heartbeat-interval"] = true
 		}
@@ -287,6 +328,10 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		default:
 			return fmt.Errorf("unknown package manager")
 		}
+	}
+	sources, err := parseEventSources(*eventSources)
+	if err != nil {
+		return err
 	}
 	health := &agent.Health{}
 	collect := func() (inventory.Snapshot, error) {
@@ -370,6 +415,40 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		agent.RunHeartbeats(heartbeatCtx, store, client, c.AgentID, health, *heartbeat, func(err error) { fmt.Fprintf(errOut, "agent heartbeat: %v\n", err) })
 	}()
 	defer func() { stopHeartbeat(); <-heartbeatDone }()
+	var eventSpool *eventstore.Store
+	if len(sources) > 0 {
+		if store.Path() == ":memory:" || strings.HasPrefix(store.Path(), "file:") {
+			return fmt.Errorf("event collection requires a durable filesystem database")
+		}
+		eventSpool, err = eventstore.Open(ctx, store.Path()+".events")
+		if err != nil {
+			return err
+		}
+		defer eventSpool.Close()
+	}
+	eventCtx, stopEvents := context.WithCancel(ctx)
+	eventDone := make(chan struct{})
+	go func() {
+		defer close(eventDone)
+		if eventSpool == nil {
+			return
+		}
+		for {
+			eventcollector.Cycle(eventCtx, eventSpool, client, c.AgentID, sources, func(e error) {
+				if eventCtx.Err() == nil {
+					fmt.Fprintf(errOut, "agent events: %v\n", e)
+				}
+			})
+			t := time.NewTimer(10 * time.Second)
+			select {
+			case <-eventCtx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	defer func() { stopEvents(); <-eventDone }()
 	worker := agent.Worker{Store: store, Client: client, AgentID: c.AgentID, Execute: func(jobCtx context.Context, job jobs.Job) jobs.Result {
 		fail := func(code string) jobs.Result { return jobs.Result{JobID: job.ID, Status: "failed", Code: code} }
 		count, size, e := store.QueueUsage(jobCtx)

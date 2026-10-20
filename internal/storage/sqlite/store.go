@@ -40,7 +40,12 @@ var jobsSchema string
 //go:embed groups.sql
 var groupsSchema string
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db   *sql.DB
+	path string
+}
+
+func (s *Store) Path() string { return s.path }
 
 var _ ports.Repository = (*Store)(nil)
 var _ ports.EventReader = (*Store)(nil)
@@ -52,7 +57,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	}
 	// One connection serializes local writers and keeps PRAGMAs consistent.
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db}
+	s := &Store{db: db, path: path}
 	if err = s.init(ctx); err != nil {
 		db.Close()
 		return nil, err

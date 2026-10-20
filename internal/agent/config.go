@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/rkislov/cerber/internal/ingest"
+	"github.com/rkislov/cerber/internal/telemetry"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 // Config contains deployment settings, never the bearer token itself. All paths
 // are absolute so SCM/systemd working directories cannot redirect state or secrets.
 type Config struct {
+	EventSources           string `json:"event_sources,omitempty"`
 	HeartbeatInterval      string `json:"heartbeat_interval,omitempty"`
 	SchemaVersion          int    `json:"schema_version"`
 	Database               string `json:"database"`
@@ -72,6 +74,15 @@ func LoadConfig(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.EventSources != "" {
+		seen := map[string]bool{}
+		for _, source := range strings.Split(c.EventSources, ",") {
+			if !telemetry.ValidSource(source) || seen[source] {
+				return fmt.Errorf("invalid event sources")
+			}
+			seen[source] = true
+		}
+	}
 	if c.HeartbeatInterval != "" {
 		interval, err := time.ParseDuration(c.HeartbeatInterval)
 		if err != nil || interval < time.Minute || interval > time.Hour {
@@ -141,6 +152,9 @@ func (c Config) Args() []string {
 	}
 	if c.CACert != "" {
 		args = append(args, "-ca-cert", c.CACert)
+	}
+	if c.EventSources != "" {
+		args = append(args, "-event-sources", c.EventSources)
 	}
 	if c.CheckWindowsUpdates {
 		args = append(args, "-check-windows-updates")

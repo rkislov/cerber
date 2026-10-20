@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: Apache-2.0
+package telemetry
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+)
+
+func TestNormalizeSourceIdentityAndQuarantine(t *testing.T) {
+	now := time.Now().UTC()
+	p, _ := json.Marshal(map[string]string{"__REALTIME_TIMESTAMP": "1700000000000000", "SYSLOG_IDENTIFIER": "sshd", "_UID": "0", "_EXE": "/usr/sbin/sshd", "MESSAGE": "Failed password for invalid user Alice from ::ffff:192.0.2.1 port 22 ssh2"})
+	r := RawRecord{Sequence: 1, AgentID: ID("a"), AssetID: "server-asset", ReceivedAt: now, Raw: Raw{ID: ID("r"), Source: "journald", ObservedAt: now, Data: p}}
+	n := Normalize(r)
+	if n.Class != "authentication" || n.Outcome != "failure" || n.User != "alice" || n.SourceIP != "192.0.2.1" {
+		t.Fatal(n)
+	}
+	var v map[string]string
+	json.Unmarshal(p, &v)
+	v["_UID"] = "1000"
+	r.Raw.Data, _ = json.Marshal(v)
+	n = Normalize(r)
+	if n.Class == "authentication" {
+		t.Fatal("message spoofed sshd")
+	}
+	r.Raw.Data = json.RawMessage(`{"MESSAGE":[1,2]}`)
+	n = Normalize(r)
+	if n.Status != "quarantine" {
+		t.Fatal(n)
+	}
+}

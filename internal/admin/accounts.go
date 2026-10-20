@@ -19,6 +19,7 @@ var ErrInvalid = errors.New("invalid administration request")
 var usernamePattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{2,63}$`)
 
 type User struct {
+	AuthMethod   string `json:"auth_method,omitempty"`
 	Username     string `json:"username"`
 	Role         string `json:"role"`
 	Disabled     bool   `json:"disabled"`

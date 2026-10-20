@@ -49,7 +49,7 @@ const usage = `Cerber — прототип сканера на Go
   siem acknowledge -id ALERT_ID
   siem evaluate-alerts [-offline-after 15m] [-inventory-max-age 24h]
   siem agents [-asset ID] [-offline-after 15m] [-inventory-max-age 24h] [-limit 100] [-after ID]
-  siem serve [-listen 127.0.0.1:8790] [-tls-cert FILE -tls-key FILE] [-admin] [-admin-key FILE]
+  siem serve [-listen 127.0.0.1:8790] [-tls-cert FILE -tls-key FILE] [-admin] [-admin-key FILE] [-events-db FILE] [-directory-config FILE]
   siem enroll -asset SERVER_ASSET_ID -out CREDENTIALS_FILE
   siem revoke -agent AGENT_ID
   agent collect -asset LOCAL_ASSET_ID -credentials FILE [-check-package-updates | -check-windows-updates]
@@ -58,7 +58,7 @@ const usage = `Cerber — прототип сканера на Go
   agent validate-config -config ABSOLUTE_FILE
   agent run -config ABSOLUTE_FILE
   agent service-run -config ABSOLUTE_FILE (Windows SCM only)
-  agent run -asset LOCAL_ASSET_ID -credentials FILE -server HTTPS_ORIGIN [-interval 1h] [-ca-cert FILE]
+  agent run -asset LOCAL_ASSET_ID -credentials FILE -server HTTPS_ORIGIN [-interval 1h] [-ca-cert FILE] [-event-sources journald|windows:Security]
   asset add -ip ADDRESS [-name NAME]
   asset list
   target add -name NAME -assets ID,ID
