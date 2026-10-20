@@ -25,6 +25,7 @@ var content embed.FS
 type Options struct {
 	Events        EventStore
 	Directory     Directory
+	OIDC          *OIDC
 	JobMonitor    func() jobs.Status
 	SecureCookies bool
 	Policy        alerts.Policy
@@ -40,6 +41,14 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 	}
 	auth := newAuth(key, options.SecureCookies, store)
 	auth.directory = options.Directory
+	auth.oidc = options.OIDC
+	if options.OIDC != nil && options.Directory != nil {
+		for name := range options.OIDC.config.Users {
+			if options.Directory.Mapped(name) {
+				return nil, errors.New("user cannot map to both LDAPS and OIDC")
+			}
+		}
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -63,6 +72,13 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 			}
 			data, _ := content.ReadFile("static/" + name)
 			_, _ = w.Write(data)
+			return
+		}
+		if path == "/admin/auth-methods" && r.Method == "GET" {
+			writeJSON(w, map[string]bool{"oidc": options.OIDC != nil})
+			return
+		}
+		if options.OIDC != nil && options.OIDC.handle(auth, w, r) {
 			return
 		}
 		if !strings.HasPrefix(path, "/admin/") {

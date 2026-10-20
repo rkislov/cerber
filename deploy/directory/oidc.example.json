@@ -1,0 +1,14 @@
+{
+  "issuer": "https://idp.example.test/realms/company",
+  "client_id": "cerber-admin",
+  "client_secret_file": "/etc/cerber/oidc-client.secret",
+  "redirect_url": "https://cerber.example.test/admin/oidc/callback",
+  "ca_cert": "/etc/cerber/domain-ca.pem",
+  "users": {
+    "sso-operator": "stable-subject-id-from-identity-provider"
+  },
+  "groups_claim": "groups",
+  "role_groups": {
+    "operator": "Cerber Operators"
+  }
+}

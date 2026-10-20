@@ -5,7 +5,9 @@ go 1.25.0
 toolchain go1.26.9
 
 require (
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-ldap/ldap/v3 v3.4.14
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.39.1
 )
@@ -14,6 +16,7 @@ require (
 	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
