@@ -4,6 +4,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"github.com/rkislov/cerber/internal/correlation"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"net/http"
 )
@@ -14,6 +15,29 @@ type EventStore interface {
 }
 
 func eventManagement(store EventStore, w http.ResponseWriter, r *http.Request, user User) bool {
+	if r.URL.Path == "/admin/api/correlation-rules" {
+		if r.Method != "GET" {
+			http.Error(w, "method not allowed", 405)
+			return true
+		}
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			writeJSON(w, map[string]any{"items": correlation.Catalog()})
+			return true
+		}
+		version, e := integer(r, "version", 0, 1, 100000)
+		if e != nil {
+			http.Error(w, "invalid rule version", 400)
+			return true
+		}
+		rule, e := correlation.Describe(id, version)
+		if e != nil {
+			http.Error(w, "rule version not found", 404)
+			return true
+		}
+		writeJSON(w, rule)
+		return true
+	}
 	if r.URL.Path != "/admin/api/security-events" && r.URL.Path != "/admin/api/detections" && r.URL.Path != "/admin/api/security-raw" {
 		return false
 	}

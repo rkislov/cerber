@@ -53,6 +53,7 @@ func TestAuthenticatedEventDeliveryAndWebPermissions(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", h)
+	mux.Handle("/v1/agent/", ingest.NewHandler(control))
 	mux.Handle("/v1/agent/events", ingest.NewEventHandler(control, journal))
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -61,6 +62,15 @@ func TestAuthenticatedEventDeliveryAndWebPermissions(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer client.Close()
+	eventHealth := telemetry.CollectorHealth{Enabled: true, ObservedAt: time.Now(), Delivery: "error", QueueKnown: true, QueueBatches: 2, QueueBytes: 1024, Sources: []telemetry.SourceHealth{{Source: "journald", State: "error", Code: "source_read_failed"}}}
+	if _, e = client.Heartbeat(ctx, ingest.Heartbeat{SchemaVersion: 1, AgentID: agentID, ObservedAt: time.Now(), Platform: "linux", Architecture: "amd64", CollectionStatus: "complete", DeliveryStatus: "ok", Events: &eventHealth}); e != nil {
+		t.Fatal(e)
+	}
+	statuses, e := control.AgentStatuses(ctx, "", "", 100)
+	if e != nil || len(statuses) != 1 || statuses[0].Health.Events == nil || statuses[0].Health.Events.Sources[0].Code != "source_read_failed" {
+		t.Fatal("event health not stored", statuses, e)
+	}
+
 	p, _ := json.Marshal(map[string]any{"event_id": 1102, "time": time.Now().UTC().Format(time.RFC3339Nano), "provider": "Microsoft-Windows-Security-Auditing"})
 	b := telemetry.Batch{SchemaVersion: 1, ID: telemetry.ID("batch"), AgentID: agentID, Records: []telemetry.Raw{{ID: telemetry.ID("event"), Source: "windows:Security", Cursor: "record-1", ObservedAt: time.Now().UTC(), Data: p}}}
 	if _, e = client.SendEvents(ctx, b); e != nil {
@@ -103,6 +113,15 @@ func TestAuthenticatedEventDeliveryAndWebPermissions(t *testing.T) {
 			t.Fatal(code)
 		}
 		cookie := res.Cookies()[0]
+		code, rule, _ := request("GET", "/admin/api/correlation-rules?id=windows.audit_log_cleared&version=1", nil, cookie, "")
+		if code != 200 || !strings.Contains(string(rule), "false_positives") {
+			t.Fatal("rule explanation", code, string(rule))
+		}
+		code, _, _ = request("GET", "/admin/api/correlation-rules?id=windows.audit_log_cleared&version=2", nil, cookie, "")
+		if code != 404 {
+			t.Fatal("unknown historical rule replaced silently", code)
+		}
+
 		_, p, _ := request("GET", "/admin/api/session", nil, cookie, "")
 		var session map[string]string
 		json.Unmarshal(p, &session)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"github.com/rkislov/cerber/internal/ingest"
 	"github.com/rkislov/cerber/internal/inventory"
+	"github.com/rkislov/cerber/internal/telemetry"
 	"runtime"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 // Health is shared by collection/delivery and the independent heartbeat loop.
 // Error text stays in local logs; the wire contract carries bounded status codes.
 type Health struct {
+	events               *telemetry.CollectorHealth
 	mu                   sync.Mutex
 	collection, delivery string
 	lastCollection       *time.Time
@@ -62,7 +64,12 @@ func (h *Health) Snapshot(id string) ingest.Heartbeat {
 		value := *h.lastCollection
 		at = &value
 	}
-	return ingest.Heartbeat{SchemaVersion: 1, AgentID: id, ObservedAt: time.Now().UTC(), Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectionStatus: collection, DeliveryStatus: delivery, LastCollectionAt: at}
+	var events *telemetry.CollectorHealth
+	if h.events != nil {
+		copy := h.events.Clone()
+		events = &copy
+	}
+	return ingest.Heartbeat{Events: events, SchemaVersion: 1, AgentID: id, ObservedAt: time.Now().UTC(), Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectionStatus: collection, DeliveryStatus: delivery, LastCollectionAt: at}
 }
 
 type HealthQueue interface {
@@ -106,4 +113,25 @@ func RunHeartbeats(ctx context.Context, queue HealthQueue, sender HeartbeatSende
 		case <-timer.C:
 		}
 	}
+}
+
+func (h *Health) EventsObserved(v telemetry.CollectorHealth) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.events != nil {
+		if v.LastDeliveryAt == nil {
+			v.LastDeliveryAt = h.events.LastDeliveryAt
+		}
+		for i := range v.Sources {
+			if v.Sources[i].LastReadAt == nil {
+				for _, old := range h.events.Sources {
+					if old.Source == v.Sources[i].Source {
+						v.Sources[i].LastReadAt = old.LastReadAt
+					}
+				}
+			}
+		}
+	}
+	copy := v.Clone()
+	h.events = &copy
 }

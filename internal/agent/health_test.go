@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/rkislov/cerber/internal/ingest"
 	"github.com/rkislov/cerber/internal/inventory"
+	"github.com/rkislov/cerber/internal/telemetry"
 	"testing"
 	"time"
 )
@@ -49,5 +50,25 @@ func TestHeartbeatSendsUnknownQueueAndCancelsWhileDeliveryBlocked(t *testing.T) 
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("heartbeat did not stop")
+	}
+}
+
+func TestEventHealthRetainsSuccessAndClonesState(t *testing.T) {
+	h := &Health{}
+	now := time.Now().UTC()
+	v := telemetry.CollectorHealth{Enabled: true, ObservedAt: now, Delivery: "ok", LastDeliveryAt: &now, Sources: []telemetry.SourceHealth{{Source: "journald", State: "ok", LastReadAt: &now}}}
+	h.EventsObserved(v)
+	v.Sources[0].State = "error"
+	future := now.Add(time.Hour)
+	h.EventsObserved(telemetry.CollectorHealth{Enabled: true, ObservedAt: future, Delivery: "error", Sources: []telemetry.SourceHealth{{Source: "journald", State: "error", Code: "source_read_failed"}}})
+	b := h.Snapshot("agent")
+	if b.Events == nil || !b.Events.LastDeliveryAt.Equal(now) || !b.Events.Sources[0].LastReadAt.Equal(now) || b.Events.Sources[0].State != "error" {
+		t.Fatal(b.Events)
+	}
+	*b.Events.LastDeliveryAt = future
+	b.Events.Sources[0].State = "blocked"
+	again := h.Snapshot("agent")
+	if !again.Events.LastDeliveryAt.Equal(now) || again.Events.Sources[0].State != "error" {
+		t.Fatal("shared heartbeat memory")
 	}
 }
