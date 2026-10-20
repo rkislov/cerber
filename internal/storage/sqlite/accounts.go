@@ -71,7 +71,7 @@ func checkAdmin(ctx context.Context, tx *sql.Tx, accounts bool) error {
 	if err != nil {
 		return admin.ErrForbidden
 	}
-	if current.Disabled || current.Version != u.Version || current.Role == "viewer" || accounts && current.Role != "administrator" {
+	if current.Disabled || current.Version != u.Version || (current.Role != "administrator" && current.Role != "operator") || accounts && current.Role != "administrator" {
 		return admin.ErrForbidden
 	}
 	return nil

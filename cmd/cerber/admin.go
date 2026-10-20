@@ -54,7 +54,7 @@ func adminKeygen(args []string, out, errOut io.Writer) error {
 func adminUserAdd(ctx context.Context, store *sqlite.Store, args []string, out, errOut io.Writer) error {
 	f := flags("siem user-add", errOut)
 	name := f.String("username", "", "unique lowercase username")
-	role := f.String("role", "viewer", "administrator, operator or viewer")
+	role := f.String("role", "viewer", "administrator, operator, analyst or viewer")
 	file := f.String("password-file", "", "private UTF-8 password file (12–256 bytes)")
 	if err := parse(f, args); err != nil {
 		return err

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,9 @@ import (
 	"github.com/rkislov/cerber/internal/telemetry"
 	_ "modernc.org/sqlite"
 )
+
+//go:embed incidents.sql
+var incidentsSchema string
 
 type Store struct{ db *sql.DB }
 
@@ -45,14 +49,34 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		}
 	}
 	var version int
-	if e = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); e != nil || version > 1 {
+	if e = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); e != nil || version > 2 {
 		db.Close()
 		return nil, fmt.Errorf("unsupported event database version: %d: %v", version, e)
 	}
-	_, e = db.ExecContext(ctx, schema)
-	if e != nil {
-		db.Close()
-		return nil, e
+	if version < 2 {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+		if version == 0 {
+			_, err = tx.ExecContext(ctx, schema)
+		}
+		if err == nil {
+			_, err = tx.ExecContext(ctx, incidentsSchema)
+		}
+		if err == nil {
+			_, err = tx.ExecContext(ctx, "PRAGMA user_version=2")
+		}
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			_ = tx.Rollback()
+		}
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return s, nil
 }

@@ -36,6 +36,8 @@ jobs:
         run: node --check internal/admin/static/groups.js
       - name: Check event console JavaScript
         run: node --check internal/admin/static/events.js
+      - name: Check incident workspace JavaScript
+        run: node --check internal/admin/static/incidents.js
       - name: Native event sources and incremental cursors
         env:
           CERBER_NATIVE_SMOKE: '1'

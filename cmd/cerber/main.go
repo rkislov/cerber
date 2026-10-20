@@ -43,7 +43,7 @@ func main() {
 
 const usage = `Cerber — прототип сканера на Go
 Использование: cerber [-db PATH] <ресурс> <команда> [параметры]
-  siem user-add -username NAME -role administrator|operator|viewer -password-file FILE
+  siem user-add -username NAME -role administrator|operator|analyst|viewer -password-file FILE
   siem admin-keygen -out FILE (legacy bootstrap)
   siem alerts [-state active|resolved|all]
   siem acknowledge -id ALERT_ID

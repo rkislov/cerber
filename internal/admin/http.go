@@ -55,13 +55,13 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'")
 		path := r.URL.Path
-		if r.Method == "GET" && (path == "/admin" || path == "/admin/" || path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/app.css" || path == "/admin/icon.svg") {
+		if r.Method == "GET" && (path == "/admin" || path == "/admin/" || path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/app.css" || path == "/admin/icon.svg") {
 			name := "index.html"
 			if path == "/admin/icon.svg" {
 				name = "icon.svg"
 				w.Header().Set("Content-Type", "image/svg+xml")
 			}
-			if path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" {
+			if path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" {
 				name = strings.TrimPrefix(path, "/admin/")
 				w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			} else if path == "/admin/app.css" {
@@ -128,12 +128,19 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 			return
 		}
 		r = r.WithContext(WithPrincipal(r.Context(), session.User))
+		if r.Method == "POST" && session.User.Role == "analyst" && !strings.HasPrefix(path, "/admin/api/incidents") && path != "/admin/api/detections" {
+			http.Error(w, "forbidden", 403)
+			return
+		}
 		if r.Method == "POST" && session.User.Role == "viewer" {
 			http.Error(w, "forbidden", 403)
 			return
 		}
 		if strings.HasPrefix(path, "/admin/api/users") && session.User.Role != "administrator" {
 			http.Error(w, "forbidden", 403)
+			return
+		}
+		if incidentManagement(store, options.Events, w, r, session.User) {
 			return
 		}
 		if eventManagement(options.Events, w, r, session.User) {

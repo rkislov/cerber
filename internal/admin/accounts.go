@@ -27,7 +27,9 @@ type User struct {
 	PasswordHash string `json:"-"`
 }
 
-func ValidRole(v string) bool     { return v == "administrator" || v == "operator" || v == "viewer" }
+func ValidRole(v string) bool {
+	return v == "administrator" || v == "operator" || v == "viewer" || v == "analyst"
+}
 func ValidUsername(v string) bool { return usernamePattern.MatchString(v) }
 func HashPassword(password string) (string, error) {
 	if len(password) < 12 || len(password) > 256 {
