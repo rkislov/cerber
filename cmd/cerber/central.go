@@ -124,6 +124,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		return adminUserAdd(ctx, store, args[2:], out, errOut)
 	case "siem serve":
 		eventsDB := f.String("events-db", "", "separate security event journal database; disabled if omitted")
+		oidcConfig := f.String("oidc-config", "", "optional OpenID Connect configuration JSON")
 		directoryConfig := f.String("directory-config", "", "optional LDAPS configuration JSON")
 		listen := f.String("listen", "127.0.0.1:8790", "receiver address")
 		cert := f.String("tls-cert", "", "TLS certificate")
@@ -174,6 +175,18 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			}
 		}
 
+		var identityProvider *admin.OIDC
+		if *oidcConfig != "" {
+			if !*adminEnabled && *adminKey == "" {
+				return fmt.Errorf("OIDC config requires admin console")
+			}
+			var err error
+			identityProvider, err = admin.LoadOIDC(ctx, *oidcConfig)
+			if err != nil {
+				return err
+			}
+			defer identityProvider.Close()
+		}
 		if *adminKey != "" || *adminEnabled {
 			token := ""
 			var err error
@@ -183,7 +196,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			if err != nil {
 				return err
 			}
-			handler, err := admin.NewHandler(store, token, admin.Options{SecureCookies: *cert != "", Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory})
+			handler, err := admin.NewHandler(store, token, admin.Options{SecureCookies: *cert != "", Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory, OIDC: identityProvider})
 			if err != nil {
 				return err
 			}

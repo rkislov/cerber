@@ -72,6 +72,7 @@ type attempts struct {
 }
 type authentication struct {
 	directory Directory
+	oidc      *OIDC
 	mu        sync.Mutex
 	key       [32]byte
 	sessions  map[[32]byte]session
@@ -84,7 +85,7 @@ type authentication struct {
 func newAuth(key string, secure bool, store Store) *authentication {
 	return &authentication{key: sha256.Sum256([]byte(key)), sessions: map[[32]byte]session{}, attempts: map[string]attempts{}, secure: secure, store: store, workers: make(chan struct{}, 4)}
 }
-func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
+func (a *authentication) allowAttempt(w http.ResponseWriter, r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
@@ -101,7 +102,7 @@ func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
 		if len(a.attempts) >= 1024 {
 			a.mu.Unlock()
 			http.Error(w, "try later", 429)
-			return
+			return false
 		}
 		bucket = attempts{Since: now}
 	}
@@ -109,11 +110,18 @@ func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
 		a.mu.Unlock()
 		w.Header().Set("Retry-After", "60")
 		http.Error(w, "try later", 429)
-		return
+		return false
 	}
 	bucket.Count++
 	a.attempts[host] = bucket
 	a.mu.Unlock()
+	return true
+}
+func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
+	if !a.allowAttempt(w, r) {
+		return
+	}
+	var err error
 	var v struct {
 		Token    string `json:"token"`
 		Username string `json:"username"`
@@ -146,7 +154,9 @@ func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
 		if e == nil {
 			hash = u.PasswordHash
 		}
-		if a.directory != nil && a.directory.Mapped(v.Username) {
+		if a.oidc != nil && a.oidc.Mapped(v.Username) {
+			valid = false
+		} else if a.directory != nil && a.directory.Mapped(v.Username) {
 			valid = e == nil && !u.Disabled && a.directory.Authenticate(r.Context(), v.Username, v.Password, u.Role) == nil
 		} else {
 			valid = CheckPassword(hash, v.Password) && e == nil && !u.Disabled
@@ -157,24 +167,30 @@ func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", 401)
 		return
 	}
-	user.PasswordHash = ""
-	user.AuthMethod = "local"
+	method := "local"
 	if a.directory != nil && a.directory.Mapped(user.Username) {
-		user.AuthMethod = "ldaps"
+		method = "ldaps"
 	}
-	if err = a.store.AdminLogin(r.Context(), user); err != nil {
-		http.Error(w, "authentication unavailable", 503)
+	if err = a.establish(w, r, user, method, time.Now().Add(8*time.Hour)); err != nil {
+		http.Error(w, "session unavailable", 503)
 		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+func (a *authentication) establish(w http.ResponseWriter, r *http.Request, user User, method string, expires time.Time) error {
+	now := time.Now()
+	user.PasswordHash = ""
+	user.AuthMethod = method
+	if err := a.store.AdminLogin(r.Context(), user); err != nil {
+		return err
 	}
 	cookie, err := randomToken()
 	if err != nil {
-		http.Error(w, "session unavailable", 503)
-		return
+		return err
 	}
 	csrf, err := randomToken()
 	if err != nil {
-		http.Error(w, "session unavailable", 503)
-		return
+		return err
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -184,13 +200,19 @@ func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(a.sessions) >= 128 {
-		http.Error(w, "session limit reached", 503)
-		return
+		return fmt.Errorf("session limit reached")
 	}
-	a.sessions[sha256.Sum256([]byte(cookie))] = session{Expires: now.Add(8 * time.Hour), CSRF: csrf, User: user, Directory: a.directory != nil && a.directory.Mapped(user.Username), DirectoryChecked: now}
-	http.SetCookie(w, &http.Cookie{Name: "cerber_admin", Value: cookie, Path: "/admin", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: 8 * 60 * 60})
-	writeJSON(w, map[string]bool{"ok": true})
+	if expires.After(now.Add(8 * time.Hour)) {
+		expires = now.Add(8 * time.Hour)
+	}
+	if !expires.After(now) {
+		return fmt.Errorf("expired identity")
+	}
+	a.sessions[sha256.Sum256([]byte(cookie))] = session{Expires: expires, CSRF: csrf, User: user, Directory: method == "ldaps", DirectoryChecked: now}
+	http.SetCookie(w, &http.Cookie{Name: "cerber_admin", Value: cookie, Path: "/admin", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: int(time.Until(expires).Seconds())})
+	return nil
 }
+
 func (a *authentication) current(r *http.Request) (session, bool) {
 	cookie, err := r.Cookie("cerber_admin")
 	if err != nil || !ValidKey(cookie.Value) {
