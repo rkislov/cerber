@@ -10,6 +10,7 @@ import (
 	"github.com/rkislov/cerber/internal/domain"
 	"github.com/rkislov/cerber/internal/ingest"
 	"github.com/rkislov/cerber/internal/inventory"
+	"github.com/rkislov/cerber/internal/jobs"
 	"github.com/rkislov/cerber/internal/storage/sqlite"
 	"net/http"
 	"net/http/httptest"
@@ -101,6 +102,10 @@ func serviceFixture(t *testing.T, root, configDir, stateDir string, install, sta
 	if err != nil || pending.ID != queued.ID {
 		t.Fatal("stop discarded pending report", pending.ID, err)
 	}
+	remoteJob, err := central.JobCommand(ctx, jobs.Command{Action: "run", AgentID: c.AgentID, Kind: "inventory"}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
 	allow.Store(true)
 	start()
 	remoteID := ingest.RemoteID(c.AgentID, "inventory", snap.ID)
@@ -120,6 +125,18 @@ func serviceFixture(t *testing.T, root, configDir, stateDir string, install, sta
 		states, e := central.AgentStatuses(ctx, a.ID, "", 10)
 		return e == nil && len(states) == 1 && states[0].LastHeartbeatAt != nil
 	}, "service did not send independent heartbeat")
+	waitFor(t, 90*time.Second, func() bool {
+		runs, e := central.Jobs(ctx, c.AgentID, 0, 101)
+		if e != nil {
+			return false
+		}
+		for _, j := range runs {
+			if j.ID == remoteJob {
+				return (j.State == "succeeded" || j.State == "partial") && j.InventoryID != ""
+			}
+		}
+		return false
+	}, "service did not execute and deliver remote inventory job")
 	stop()
 	local, err = sqlite.Open(ctx, db)
 	if err != nil {

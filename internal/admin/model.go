@@ -8,6 +8,7 @@ import (
 	"github.com/rkislov/cerber/internal/alerts"
 	"github.com/rkislov/cerber/internal/ingest"
 	"github.com/rkislov/cerber/internal/inventory"
+	"github.com/rkislov/cerber/internal/jobs"
 	"time"
 )
 
@@ -32,6 +33,9 @@ type InventoryPage struct {
 	Items              []json.RawMessage `json:"items"`
 }
 type Store interface {
+	JobCommand(context.Context, jobs.Command, time.Time) (string, error)
+	Jobs(context.Context, string, int64, int) ([]jobs.Job, error)
+	JobSchedules(context.Context, string, string, int) ([]jobs.Schedule, error)
 	AdminLogin(context.Context, User) error
 	AdminUser(context.Context, string) (User, error)
 	AdminUserCount(context.Context) (int, error)

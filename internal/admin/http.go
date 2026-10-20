@@ -9,6 +9,7 @@ import (
 	"github.com/rkislov/cerber/internal/alerts"
 	"github.com/rkislov/cerber/internal/domain"
 	"github.com/rkislov/cerber/internal/ingest"
+	"github.com/rkislov/cerber/internal/jobs"
 	"io"
 	"mime"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 var content embed.FS
 
 type Options struct {
+	JobMonitor    func() jobs.Status
 	SecureCookies bool
 	Policy        alerts.Policy
 	Monitor       func() alerts.Status
@@ -113,6 +115,9 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 		}
 		if strings.HasPrefix(path, "/admin/api/users") && session.User.Role != "administrator" {
 			http.Error(w, "forbidden", 403)
+			return
+		}
+		if jobManagement(store, w, r, options.JobMonitor) {
 			return
 		}
 		if management(store, w, r) {
@@ -280,7 +285,7 @@ func storageError(w http.ResponseWriter, err error) {
 	if errors.Is(err, ErrForbidden) {
 		status = 403
 	}
-	if errors.Is(err, ErrInvalid) {
+	if errors.Is(err, ErrInvalid) || errors.Is(err, jobs.ErrInvalid) {
 		status = 400
 	}
 	if errors.Is(err, domain.ErrNotFound) {
