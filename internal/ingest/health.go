@@ -3,6 +3,7 @@ package ingest
 
 import (
 	"fmt"
+	"github.com/rkislov/cerber/internal/telemetry"
 	"time"
 )
 
@@ -11,20 +12,26 @@ const MaxHeartbeatBytes int64 = 4096
 // Heartbeat is ephemeral health, not inventory. Server receipt time determines
 // contact freshness; the agent clock never controls that decision.
 type Heartbeat struct {
-	SchemaVersion    int        `json:"schema_version"`
-	AgentID          string     `json:"agent_id"`
-	ObservedAt       time.Time  `json:"observed_at"`
-	Platform         string     `json:"platform"`
-	Architecture     string     `json:"architecture"`
-	QueueKnown       bool       `json:"queue_known"`
-	QueueReports     int64      `json:"queue_reports"`
-	QueueBytes       int64      `json:"queue_bytes"`
-	CollectionStatus string     `json:"collection_status"`
-	LastCollectionAt *time.Time `json:"last_collection_at,omitempty"`
-	DeliveryStatus   string     `json:"delivery_status"`
+	Events           *telemetry.CollectorHealth `json:"events,omitempty"`
+	SchemaVersion    int                        `json:"schema_version"`
+	AgentID          string                     `json:"agent_id"`
+	ObservedAt       time.Time                  `json:"observed_at"`
+	Platform         string                     `json:"platform"`
+	Architecture     string                     `json:"architecture"`
+	QueueKnown       bool                       `json:"queue_known"`
+	QueueReports     int64                      `json:"queue_reports"`
+	QueueBytes       int64                      `json:"queue_bytes"`
+	CollectionStatus string                     `json:"collection_status"`
+	LastCollectionAt *time.Time                 `json:"last_collection_at,omitempty"`
+	DeliveryStatus   string                     `json:"delivery_status"`
 }
 
 func (h Heartbeat) Validate() error {
+	if h.Events != nil {
+		if err := h.Events.Validate(); err != nil {
+			return err
+		}
+	}
 	if h.SchemaVersion != 1 || !Identifier(h.AgentID) || h.ObservedAt.IsZero() || h.Platform != "windows" && h.Platform != "linux" || h.Architecture != "amd64" && h.Architecture != "arm64" {
 		return fmt.Errorf("invalid heartbeat metadata")
 	}
@@ -61,7 +68,11 @@ func (h Heartbeat) QueueState() string {
 
 // TransitionKey excludes counters/timestamps to avoid a durable event per heartbeat.
 func (h Heartbeat) TransitionKey() string {
-	return h.CollectionStatus + ":" + h.DeliveryStatus + ":" + h.QueueState()
+	key := h.CollectionStatus + ":" + h.DeliveryStatus + ":" + h.QueueState()
+	if h.Events != nil {
+		key += ":" + h.Events.Key()
+	}
+	return key
 }
 
 type HeartbeatReceipt struct {

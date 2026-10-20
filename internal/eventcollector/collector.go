@@ -251,7 +251,8 @@ type Sender interface {
 	SendEvents(context.Context, telemetry.Batch) (telemetry.Receipt, error)
 }
 
-func Cycle(ctx context.Context, spool Spool, sender Sender, agent string, sources []Source, onError func(error)) {
+func Cycle(ctx context.Context, spool Spool, sender Sender, agent string, sources []Source, onError func(error)) telemetry.CollectorHealth {
+	result := telemetry.CollectorHealth{Enabled: len(sources) > 0, ObservedAt: time.Now().UTC(), Delivery: "idle", Sources: []telemetry.SourceHealth{}}
 	flush := func() {
 		for i := 0; i < 20; i++ {
 			b, e := spool.NextBatch(ctx, agent)
@@ -259,6 +260,7 @@ func Cycle(ctx context.Context, spool Spool, sender Sender, agent string, source
 				return
 			}
 			if e != nil {
+				result.Delivery = "error"
 				onError(e)
 				return
 			}
@@ -267,36 +269,68 @@ func Cycle(ctx context.Context, spool Spool, sender Sender, agent string, source
 				e = spool.Ack(ctx, b, r)
 			}
 			if e != nil {
+				result.Delivery = "error"
 				onError(e)
 				return
 			}
+			result.Delivery = "ok"
+			now := time.Now().UTC()
+			result.LastDeliveryAt = &now
 		}
 	}
 	flush()
 	for _, source := range sources {
-		c, e := spool.SourceCursor(ctx, agent, source.Name())
-		if e != nil {
-			onError(e)
-			continue
+		status := telemetry.SourceHealth{Source: source.Name(), State: "error", Code: "spool_error"}
+		collect := func() {
+			c, e := spool.SourceCursor(ctx, agent, source.Name())
+			if e != nil {
+				onError(e)
+				return
+			}
+			records, e := source.Read(ctx, c)
+			if e != nil {
+				status.Code = "source_read_failed"
+				onError(fmt.Errorf("%s: %w", source.Name(), e))
+				return
+			}
+			if len(records) > 0 {
+				b := telemetry.Batch{SchemaVersion: 1, AgentID: agent, Records: records}
+				var nonce [32]byte
+				if _, e = rand.Read(nonce[:]); e != nil {
+					onError(e)
+					return
+				}
+				b.ID = hex.EncodeToString(nonce[:])
+				if e = spool.Enqueue(ctx, b, source.Name(), c, records[len(records)-1].Cursor); e != nil {
+					if errors.Is(e, telemetry.ErrFull) {
+						status.State = "blocked"
+						status.Code = "spool_full"
+					}
+					onError(e)
+					return
+				}
+			}
+			status.State = "ok"
+			status.Code = ""
+			now := time.Now().UTC()
+			status.LastReadAt = &now
 		}
-		records, e := source.Read(ctx, c)
-		if e != nil {
-			onError(fmt.Errorf("%s: %w", source.Name(), e))
-			continue
-		}
-		if len(records) == 0 {
-			continue
-		}
-		b := telemetry.Batch{SchemaVersion: 1, AgentID: agent, Records: records}
-		var nonce [32]byte
-		if _, e = rand.Read(nonce[:]); e != nil {
-			onError(e)
-			continue
-		}
-		b.ID = hex.EncodeToString(nonce[:])
-		if e = spool.Enqueue(ctx, b, source.Name(), c, records[len(records)-1].Cursor); e != nil {
+		collect()
+		result.Sources = append(result.Sources, status)
+	}
+	flush()
+	if q, ok := spool.(interface {
+		EventQueueUsage(context.Context, string) (int64, int64, error)
+	}); ok {
+		count, size, e := q.EventQueueUsage(ctx, agent)
+		if e == nil {
+			result.QueueKnown = true
+			result.QueueBatches = count
+			result.QueueBytes = size
+		} else {
 			onError(e)
 		}
 	}
-	flush()
+	result.ObservedAt = time.Now().UTC()
+	return result
 }

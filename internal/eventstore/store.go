@@ -191,7 +191,7 @@ func (s *Store) Enqueue(ctx context.Context, b telemetry.Batch, source, expected
 		return telemetry.ErrConflict
 	}
 	var count, size int64
-	if e = tx.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(length(payload)),0) FROM event_spool").Scan(&count, &size); e != nil {
+	if e = tx.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(length(CAST(payload AS BLOB))),0) FROM event_spool").Scan(&count, &size); e != nil {
 		return e
 	}
 	p, _ := json.Marshal(b)
@@ -383,4 +383,10 @@ func equivalentSourceJSON(a, b json.RawMessage) bool {
 	}
 	y, e := canonical(b)
 	return e == nil && bytes.Equal(x, y)
+}
+
+func (s *Store) EventQueueUsage(ctx context.Context, agent string) (int64, int64, error) {
+	var count, size int64
+	e := s.db.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(length(CAST(payload AS BLOB))),0) FROM event_spool WHERE agent_id=?", agent).Scan(&count, &size)
+	return count, size, e
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/rkislov/cerber/internal/inventory"
 	"github.com/rkislov/cerber/internal/jobs"
 	"github.com/rkislov/cerber/internal/storage/sqlite"
+	"github.com/rkislov/cerber/internal/telemetry"
 	"io"
 	"net/http"
 	"os"
@@ -347,6 +348,11 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		return err
 	}
 	health := &agent.Health{}
+	initialEvents := telemetry.CollectorHealth{Enabled: len(sources) > 0, ObservedAt: time.Now().UTC(), Delivery: "not_attempted", Sources: []telemetry.SourceHealth{}}
+	for _, s := range sources {
+		initialEvents.Sources = append(initialEvents.Sources, telemetry.SourceHealth{Source: s.Name(), State: "not_attempted"})
+	}
+	health.EventsObserved(initialEvents)
 	collect := func() (inventory.Snapshot, error) {
 		svc := app.InventoryService{Store: store, Assets: store}
 		switch runtime.GOOS {
@@ -447,11 +453,12 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			return
 		}
 		for {
-			eventcollector.Cycle(eventCtx, eventSpool, client, c.AgentID, sources, func(e error) {
+			eventHealth := eventcollector.Cycle(eventCtx, eventSpool, client, c.AgentID, sources, func(e error) {
 				if eventCtx.Err() == nil {
 					fmt.Fprintf(errOut, "agent events: %v\n", e)
 				}
 			})
+			health.EventsObserved(eventHealth)
 			t := time.NewTimer(10 * time.Second)
 			select {
 			case <-eventCtx.Done():

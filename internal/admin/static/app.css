@@ -7,3 +7,4 @@
 .raw-data{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6fa;padding:20px;border-radius:8px;max-height:65vh;overflow:auto}#security-events td{max-width:420px;overflow-wrap:anywhere}#security-section select{min-width:150px}#detections-list .group-selection{max-height:140px;overflow:auto;flex-wrap:wrap}
 
 #oidc-login{display:block;text-align:center;text-decoration:none;margin-top:14px}#oidc-login.hidden{display:none}
+#rule-dialog{width:min(920px,calc(100vw - 32px))}#rule-description{padding:8px 24px 24px;max-height:65vh;overflow:auto;line-height:1.6}#rule-description h3{margin:22px 0 8px}#rule-description p{margin:8px 0}#rule-description ol{padding-left:22px}#rule-description a{display:block;overflow-wrap:anywhere}

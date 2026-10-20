@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"github.com/rkislov/cerber/internal/ingest"
+	"github.com/rkislov/cerber/internal/telemetry"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -154,5 +155,26 @@ func TestHeartbeatRejectsForgedReceipt(t *testing.T) {
 	output, _ := json.Marshal(heartbeat())
 	if bytes.Contains(output, []byte(c.Token)) {
 		t.Fatal("token in health payload")
+	}
+}
+
+func TestEventHealthFitsHeartbeatAndRejectsInvalidDiagnostics(t *testing.T) {
+	h := heartbeat()
+	at := time.Now().UTC()
+	v := telemetry.CollectorHealth{Enabled: true, ObservedAt: at, Delivery: "error", QueueKnown: true, QueueBatches: 1000, QueueBytes: 256 << 20, LastDeliveryAt: &at}
+	for _, source := range []string{"journald", "windows:Security", "windows:System", "windows:Application"} {
+		v.Sources = append(v.Sources, telemetry.SourceHealth{Source: source, State: "error", Code: "source_read_failed", LastReadAt: &at})
+	}
+	h.Events = &v
+	if e := h.Validate(); e != nil {
+		t.Fatal(e)
+	}
+	data, e := json.Marshal(h)
+	if e != nil || int64(len(data)) > ingest.MaxHeartbeatBytes {
+		t.Fatal("event health exceeds wire bound", len(data), e)
+	}
+	v.Sources[0].Code = "unbounded detail"
+	if h.Validate() == nil {
+		t.Fatal("diagnostic not bounded")
 	}
 }
