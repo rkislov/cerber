@@ -42,10 +42,10 @@ func insertJob(ctx context.Context, tx *sql.Tx, c jobs.Command, schedule, actor 
 		return "", err
 	}
 	eventActor := actor
-	if schedule != "" {
+	if schedule != "" || c.Scheduled {
 		eventActor = "scheduler"
 	}
-	return id, jobEvent(ctx, tx, "agent.job.queued", id, eventActor, map[string]any{"agent_id": c.AgentID, "kind": c.Kind, "schedule_id": schedule, "created_by": actor, "refresh_metadata": c.RefreshMetadata})
+	return id, jobEvent(ctx, tx, "agent.job.queued", id, eventActor, map[string]any{"agent_id": c.AgentID, "kind": c.Kind, "schedule_id": schedule, "created_by": actor, "refresh_metadata": c.RefreshMetadata, "group_run_id": c.GroupRunID})
 }
 func (s *Store) JobCommand(ctx context.Context, c jobs.Command, now time.Time) (string, error) {
 	switch c.Action {
@@ -161,13 +161,13 @@ func (s *Store) JobCommand(ctx context.Context, c jobs.Command, now time.Time) (
 	return id, tx.Commit()
 }
 
-const jobSelect = `SELECT j.sequence,j.id,j.agent_id,a.name,a.ip,COALESCE(j.schedule_id,''),j.kind,j.refresh_metadata,j.state,j.created_at,j.started_at,j.finished_at,j.expires_at,j.created_by,j.result,j.inventory_id FROM agent_jobs j JOIN agents g ON g.id=j.agent_id JOIN assets a ON a.id=g.asset_id `
+const jobSelect = `SELECT j.sequence,j.id,j.agent_id,a.name,a.ip,COALESCE(j.schedule_id,''),j.kind,j.refresh_metadata,j.state,j.created_at,j.started_at,j.finished_at,j.expires_at,j.created_by,j.result,j.inventory_id,COALESCE(gm.run_id,'') FROM agent_jobs j JOIN agents g ON g.id=j.agent_id JOIN assets a ON a.id=g.asset_id LEFT JOIN agent_group_run_members gm ON gm.job_id=j.id `
 
 func scanJob(row interface{ Scan(...any) error }) (jobs.Job, error) {
 	var j jobs.Job
 	var created, expires string
 	var started, finished, result sql.NullString
-	err := row.Scan(&j.Sequence, &j.ID, &j.AgentID, &j.AssetName, &j.AssetIP, &j.ScheduleID, &j.Kind, &j.RefreshMetadata, &j.State, &created, &started, &finished, &expires, &j.CreatedBy, &result, &j.InventoryID)
+	err := row.Scan(&j.Sequence, &j.ID, &j.AgentID, &j.AssetName, &j.AssetIP, &j.ScheduleID, &j.Kind, &j.RefreshMetadata, &j.State, &created, &started, &finished, &expires, &j.CreatedBy, &result, &j.InventoryID, &j.GroupRunID)
 	if err != nil {
 		return j, err
 	}
@@ -358,6 +358,9 @@ func (s *Store) AdvanceJobs(ctx context.Context, now time.Time) error {
 		if _, err = tx.ExecContext(ctx, "UPDATE agent_schedules SET next_run_at=? WHERE id=?", stamp(next), v.s.ID); err != nil {
 			return err
 		}
+	}
+	if err = advanceGroupSchedules(ctx, tx, now); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

@@ -33,6 +33,15 @@ type InventoryPage struct {
 	Items              []json.RawMessage `json:"items"`
 }
 type Store interface {
+	GroupCommand(context.Context, jobs.GroupCommand, time.Time) (string, error)
+	AgentGroup(context.Context, string) (jobs.Group, error)
+	AgentGroups(context.Context, string, string, int) ([]jobs.Group, error)
+	AgentGroupMembers(context.Context, string, string, int) ([]jobs.GroupMember, error)
+	AgentGroupCandidates(context.Context, string, string, string, int) ([]jobs.GroupMember, error)
+	GroupSchedules(context.Context, string, string, int) ([]jobs.GroupSchedule, error)
+	GroupRuns(context.Context, string, int64, int) ([]jobs.GroupRun, error)
+	AgentGroupRun(context.Context, string) (jobs.GroupRun, error)
+	GroupRunMembers(context.Context, string, string, int) ([]jobs.GroupRunMember, error)
 	JobCommand(context.Context, jobs.Command, time.Time) (string, error)
 	Jobs(context.Context, string, int64, int) ([]jobs.Job, error)
 	JobSchedules(context.Context, string, string, int) ([]jobs.Schedule, error)

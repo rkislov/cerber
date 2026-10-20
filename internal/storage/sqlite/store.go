@@ -37,6 +37,9 @@ var accountsSchema string
 //go:embed jobs.sql
 var jobsSchema string
 
+//go:embed groups.sql
+var groupsSchema string
+
 type Store struct{ db *sql.DB }
 
 var _ ports.Repository = (*Store)(nil)
@@ -94,6 +97,7 @@ func (s *Store) init(ctx context.Context) error {
 	case 6:
 	case 7:
 	case 8:
+	case 9:
 	default:
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
@@ -145,6 +149,14 @@ func (s *Store) init(ctx context.Context) error {
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=8"); err != nil {
+			return err
+		}
+	}
+	if version < 9 {
+		if _, err = tx.ExecContext(ctx, groupsSchema); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=9"); err != nil {
 			return err
 		}
 	}

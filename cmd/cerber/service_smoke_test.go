@@ -102,7 +102,33 @@ func serviceFixture(t *testing.T, root, configDir, stateDir string, install, sta
 	if err != nil || pending.ID != queued.ID {
 		t.Fatal("stop discarded pending report", pending.ID, err)
 	}
-	remoteJob, err := central.JobCommand(ctx, jobs.Command{Action: "run", AgentID: c.AgentID, Kind: "inventory"}, time.Now().UTC())
+	if err = central.RegisterAgent(ctx, "idle-agent", a.ID, ingest.Hash([]byte(strings.Repeat("f", 64)))); err != nil {
+		t.Fatal(err)
+	}
+	groupID, err := central.GroupCommand(ctx, jobs.GroupCommand{Action: "create", Name: "service-group"}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = central.GroupCommand(ctx, jobs.GroupCommand{Action: "members.add", GroupID: groupID, GroupVersion: 1, AgentIDs: []string{c.AgentID, "idle-agent"}}, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	groupRun, err := central.GroupCommand(ctx, jobs.GroupCommand{Action: "run", GroupID: groupID, GroupVersion: 2, Kind: "inventory"}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, err := central.GroupRunMembers(ctx, groupRun, "", 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteJob := ""
+	for _, m := range members {
+		if m.AgentID == c.AgentID {
+			remoteJob = m.JobID
+		}
+	}
+	if remoteJob == "" {
+		t.Fatal("no child job for native service")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +149,15 @@ func serviceFixture(t *testing.T, root, configDir, stateDir string, install, sta
 	probe.Close()
 	waitFor(t, 20*time.Second, func() bool {
 		states, e := central.AgentStatuses(ctx, a.ID, "", 10)
-		return e == nil && len(states) == 1 && states[0].LastHeartbeatAt != nil
+		if e != nil {
+			return false
+		}
+		for _, state := range states {
+			if state.AgentID == c.AgentID {
+				return state.LastHeartbeatAt != nil
+			}
+		}
+		return false
 	}, "service did not send independent heartbeat")
 	waitFor(t, 90*time.Second, func() bool {
 		runs, e := central.Jobs(ctx, c.AgentID, 0, 101)
@@ -137,6 +171,18 @@ func serviceFixture(t *testing.T, root, configDir, stateDir string, install, sta
 		}
 		return false
 	}, "service did not execute and deliver remote inventory job")
+	summary, err := central.AgentGroupRun(ctx, groupRun)
+	if err != nil || summary.Total != 2 || summary.Queued != 1 || summary.Succeeded+summary.Partial != 1 {
+		t.Fatal("native group progress", summary, err)
+	}
+	if _, err = central.GroupCommand(ctx, jobs.GroupCommand{Action: "run.cancel", ID: groupRun}, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	summary, err = central.AgentGroupRun(ctx, groupRun)
+	if err != nil || summary.Canceled != 1 || summary.Succeeded+summary.Partial != 1 {
+		t.Fatal("group cancellation changed completed result", summary, err)
+	}
+
 	stop()
 	local, err = sqlite.Open(ctx, db)
 	if err != nil {
