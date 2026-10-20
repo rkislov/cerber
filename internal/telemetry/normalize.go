@@ -19,6 +19,7 @@ func Normalize(r RawRecord) Normalized {
 	n := Normalized{Sequence: r.Sequence, ID: ID(r.AgentID, r.Raw.ID), AgentID: r.AgentID, AssetID: r.AssetID, Source: r.Raw.Source, ReceivedAt: r.ReceivedAt, EventTime: r.Raw.ObservedAt, Parser: "native-auth/1", Status: "parsed", Class: "system", Action: "log", Outcome: "unknown"}
 	fail := func() Normalized {
 		n.Status = "quarantine"
+		n.EventTime = r.ReceivedAt
 		n.Class = "unknown"
 		n.Message = "Invalid native event structure"
 		return n
@@ -96,6 +97,7 @@ func Normalize(r RawRecord) Normalized {
 	n.User = strings.ToLower(n.User)
 	if n.EventTime.After(r.ReceivedAt.Add(5 * time.Minute)) {
 		n.Status = "quarantine"
+		n.EventTime = r.ReceivedAt
 		n.Class = "unknown"
 		n.Message = "Source event time exceeds server time by more than 5 minutes"
 	}

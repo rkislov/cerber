@@ -29,3 +29,14 @@ func TestNormalizeSourceIdentityAndQuarantine(t *testing.T) {
 		t.Fatal(n)
 	}
 }
+
+func TestExtremeTimestampDoesNotPoisonPipeline(t *testing.T) {
+	now := time.Now().UTC()
+	n := Normalize(RawRecord{ReceivedAt: now, Raw: Raw{Source: "journald", ObservedAt: now, Data: json.RawMessage(`{"__REALTIME_TIMESTAMP":"9223372036854775807","MESSAGE":"future"}`)}})
+	if n.Status != "quarantine" || !n.EventTime.Equal(now) {
+		t.Fatal(n)
+	}
+	if _, e := json.Marshal(n); e != nil {
+		t.Fatal(e)
+	}
+}
