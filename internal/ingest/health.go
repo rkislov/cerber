@@ -70,6 +70,8 @@ type HeartbeatReceipt struct {
 	ReceivedAt time.Time `json:"received_at"`
 }
 type AgentStatus struct {
+	AssetName         string     `json:"asset_name"`
+	AssetIP           string     `json:"asset_ip"`
 	AgentID           string     `json:"agent_id"`
 	AssetID           string     `json:"asset_id"`
 	CreatedAt         time.Time  `json:"created_at"`

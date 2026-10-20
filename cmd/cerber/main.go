@@ -43,8 +43,12 @@ func main() {
 
 const usage = `Cerber — прототип сканера на Go
 Использование: cerber [-db PATH] <ресурс> <команда> [параметры]
+  siem admin-keygen -out FILE
+  siem alerts [-state active|resolved|all]
+  siem acknowledge -id ALERT_ID
+  siem evaluate-alerts [-offline-after 15m] [-inventory-max-age 24h]
   siem agents [-asset ID] [-offline-after 15m] [-inventory-max-age 24h] [-limit 100] [-after ID]
-  siem serve [-listen 127.0.0.1:8790] [-tls-cert FILE -tls-key FILE]
+  siem serve [-listen 127.0.0.1:8790] [-tls-cert FILE -tls-key FILE] [-admin-key FILE]
   siem enroll -asset SERVER_ASSET_ID -out CREDENTIALS_FILE
   siem revoke -agent AGENT_ID
   agent collect -asset LOCAL_ASSET_ID -credentials FILE [-check-package-updates | -check-windows-updates]
@@ -137,8 +141,11 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return knowledgeCommand(ctx, args[1:], out, errOut)
 	}
 	command := args[0] + " " + args[1]
+	if command == "siem admin-keygen" {
+		return adminKeygen(args[2:], out, errOut)
+	}
 	switch command {
-	case "siem agents", "siem serve", "siem enroll", "siem revoke", "agent collect", "agent enqueue", "agent flush", "agent run", "inventory import", "inventory collect-local", "inventory list", "inventory show", "inventory diff", "updates edge", "updates list", "asset add", "asset list", "target add", "target list", "task create", "task list", "task run", "task show", "events list":
+	case "siem alerts", "siem acknowledge", "siem evaluate-alerts", "siem agents", "siem serve", "siem enroll", "siem revoke", "agent collect", "agent enqueue", "agent flush", "agent run", "inventory import", "inventory collect-local", "inventory list", "inventory show", "inventory diff", "updates edge", "updates list", "asset add", "asset list", "target add", "target list", "task create", "task list", "task run", "task show", "events list":
 	default:
 		return fmt.Errorf("unknown command %q", command)
 	}
