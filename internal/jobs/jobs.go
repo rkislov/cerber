@@ -19,6 +19,7 @@ const QueueTTL = 24 * time.Hour
 func ValidKind(kind string) bool { return kind == "inventory" || kind == "updates" }
 
 type Job struct {
+	GroupRunID      string     `json:"group_run_id,omitempty"`
 	Sequence        int64      `json:"sequence"`
 	ID              string     `json:"id"`
 	AgentID         string     `json:"agent_id"`
@@ -77,6 +78,8 @@ type Schedule struct {
 	CreatedBy       string    `json:"created_by"`
 }
 type Command struct {
+	GroupRunID      string    `json:"-"`
+	Scheduled       bool      `json:"-"`
 	Action          string    `json:"action"`
 	ID              string    `json:"id,omitempty"`
 	AgentID         string    `json:"agent_id,omitempty"`

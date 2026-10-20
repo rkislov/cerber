@@ -46,6 +46,9 @@ func receiveJob(w http.ResponseWriter, r *http.Request, store JobReceiver, id, h
 	if r.URL.Path == "/v1/agent/jobs/claim" {
 		var job *jobs.Job
 		job, err = store.ClaimJob(r.Context(), id, hash, time.Now().UTC())
+		if job != nil {
+			job.GroupRunID = ""
+		} // Group attribution belongs to the server; keep the v1 agent wire contract.
 		v = map[string]any{"job": job}
 	} else {
 		err = store.FinishJob(r.Context(), id, hash, value, time.Now().UTC())

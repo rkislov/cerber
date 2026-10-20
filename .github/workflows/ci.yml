@@ -32,6 +32,8 @@ jobs:
           cache: true
       - name: Check embedded admin JavaScript
         run: node --check internal/admin/static/app.js
+      - name: Check agent group JavaScript
+        run: node --check internal/admin/static/groups.js
       - run: go mod verify
       - run: go test ./...
       - name: Native Linux package inventory and cached APT candidates
