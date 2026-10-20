@@ -19,14 +19,59 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"sync"
 	"time"
 )
 
 func readCredentials(path string) (ingest.Credentials, error) { return agent.LoadCredentials(path) }
+
+type lockedWriter struct {
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+func (w *lockedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writer.Write(p)
+}
 func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out, errOut io.Writer) error {
+	errOut = &lockedWriter{writer: errOut}
 	command := args[0] + " " + args[1]
 	f := flags(command, errOut)
 	switch command {
+	case "siem agents":
+		asset := f.String("asset", "", "optional server asset ID")
+		after := f.String("after", "", "exclusive agent ID cursor")
+		limit := f.Int("limit", 100, "page size (1–1000)")
+		offline := f.Duration("offline-after", 15*time.Minute, "contact/health stale threshold (1m–24h)")
+		maxAge := f.Duration("inventory-max-age", 24*time.Hour, "inventory stale threshold (1m–365d)")
+		if err := parse(f, args[2:]); err != nil {
+			return err
+		}
+		if *limit < 1 || *limit > 1000 || *offline < time.Minute || *offline > 24*time.Hour || *maxAge < time.Minute || *maxAge > 365*24*time.Hour {
+			return fmt.Errorf("invalid agent status limits or freshness policy")
+		}
+		now := time.Now().UTC()
+		agents, err := store.AgentStatuses(ctx, *asset, *after, *limit+1)
+		if err != nil {
+			return err
+		}
+		next := ""
+		if len(agents) > *limit {
+			agents = agents[:*limit]
+			next = agents[len(agents)-1].AgentID
+		}
+		for i := range agents {
+			agents[i].Evaluate(now, *offline, *maxAge)
+		}
+		return json.NewEncoder(out).Encode(struct {
+			AsOf            time.Time            `json:"as_of"`
+			OfflineAfter    string               `json:"offline_after"`
+			InventoryMaxAge string               `json:"inventory_max_age"`
+			Agents          []ingest.AgentStatus `json:"agents"`
+			Next            string               `json:"next_cursor,omitempty"`
+		}{now, offline.String(), maxAge.String(), agents, next})
 	case "siem serve":
 		listen := f.String("listen", "127.0.0.1:8790", "receiver address")
 		cert := f.String("tls-cert", "", "TLS certificate")
@@ -90,6 +135,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 	packages := f.Bool("check-package-updates", false, "query native Linux package update candidates")
 	refresh := f.Bool("refresh-package-metadata", false, "refresh configured Linux repository metadata")
 	manager := f.String("package-manager", "auto", "Linux package manager")
+	heartbeat := f.Duration("heartbeat-interval", time.Minute, "heartbeat interval for run (1m–1h)")
 	interval := f.Duration("interval", time.Hour, "collection interval for run (1m–24h)")
 	if err := parse(f, args[2:]); err != nil {
 		return err
@@ -109,6 +155,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			allowed["server"] = true
 			allowed["ca-cert"] = true
 			allowed["interval"] = true
+			allowed["heartbeat-interval"] = true
 		}
 	}
 	var invalid string
@@ -149,6 +196,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			return fmt.Errorf("unknown package manager")
 		}
 	}
+	health := &agent.Health{}
 	collect := func() (inventory.Snapshot, error) {
 		svc := app.InventoryService{Store: store, Assets: store}
 		switch runtime.GOOS {
@@ -175,6 +223,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			return ingest.Report{}, fmt.Errorf("agent queue full; flush before collecting")
 		}
 		s, err := collect()
+		health.Collected(s, err)
 		if err != nil {
 			return ingest.Report{}, err
 		}
@@ -219,6 +268,16 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 	if *interval < time.Minute || *interval > 24*time.Hour {
 		return fmt.Errorf("collection interval must be 1m–24h")
 	}
+	if *heartbeat < time.Minute || *heartbeat > time.Hour {
+		return fmt.Errorf("heartbeat interval must be 1m–1h")
+	}
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		agent.RunHeartbeats(heartbeatCtx, store, client, c.AgentID, health, *heartbeat, func(err error) { fmt.Fprintf(errOut, "agent heartbeat: %v\n", err) })
+	}()
+	defer func() { stopHeartbeat(); <-heartbeatDone }()
 	nextCollection := time.Time{}
 	retry := 30 * time.Second
 	for {
@@ -226,6 +285,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			return nil
 		}
 		n, deliveryErr := agent.Flush(ctx, store, client, c.AgentID)
+		health.Delivered(n, deliveryErr)
 		if deliveryErr != nil {
 			fmt.Fprintf(errOut, "agent delivery: %v\n", deliveryErr)
 		} else if n > 0 {
@@ -238,7 +298,9 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 				fmt.Fprintf(errOut, "agent collection: %v\n", err)
 			} else {
 				fmt.Fprintf(errOut, "agent queued report %s\n", r.ID)
-				_, deliveryErr = agent.Flush(ctx, store, client, c.AgentID)
+				delivered, flushErr := agent.Flush(ctx, store, client, c.AgentID)
+				deliveryErr = flushErr
+				health.Delivered(delivered, deliveryErr)
 				if deliveryErr != nil {
 					fmt.Fprintf(errOut, "agent delivery: %v\n", deliveryErr)
 				}

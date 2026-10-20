@@ -24,14 +24,17 @@ var ErrUnauthorized = errors.New("agent unauthorized")
 type Receiver interface {
 	AgentBinding(context.Context, string, string) (string, error)
 	AcceptReport(context.Context, string, string, Report) (Receipt, error)
+	AcceptHeartbeat(context.Context, string, string, Heartbeat) (HeartbeatReceipt, error)
 }
 
 func NewHandler(store Receiver) http.Handler {
 	slots := make(chan struct{}, 4)
+	heartbeatSlots := make(chan struct{}, 4)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if r.URL.Path != "/v1/agent/reports" {
+		isHeartbeat := r.URL.Path == "/v1/agent/heartbeat"
+		if r.URL.Path != "/v1/agent/reports" && !isHeartbeat {
 			http.NotFound(w, r)
 			return
 		}
@@ -56,9 +59,13 @@ func NewHandler(store Receiver) http.Handler {
 			}
 			return
 		}
+		admission := slots
+		if isHeartbeat {
+			admission = heartbeatSlots
+		}
 		select {
-		case slots <- struct{}{}:
-			defer func() { <-slots }()
+		case admission <- struct{}{}:
+			defer func() { <-admission }()
 		default:
 			w.Header().Set("Retry-After", "30")
 			http.Error(w, "receiver busy", 429)
@@ -67,6 +74,10 @@ func NewHandler(store Receiver) http.Handler {
 		content, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil || content != "application/json" {
 			http.Error(w, "application/json required", 415)
+			return
+		}
+		if isHeartbeat {
+			receiveHeartbeat(w, r, store, id, hash)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, MaxReportBytes)

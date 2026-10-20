@@ -43,6 +43,7 @@ func main() {
 
 const usage = `Cerber — прототип сканера на Go
 Использование: cerber [-db PATH] <ресурс> <команда> [параметры]
+  siem agents [-asset ID] [-offline-after 15m] [-inventory-max-age 24h] [-limit 100] [-after ID]
   siem serve [-listen 127.0.0.1:8790] [-tls-cert FILE -tls-key FILE]
   siem enroll -asset SERVER_ASSET_ID -out CREDENTIALS_FILE
   siem revoke -agent AGENT_ID
@@ -137,7 +138,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}
 	command := args[0] + " " + args[1]
 	switch command {
-	case "siem serve", "siem enroll", "siem revoke", "agent collect", "agent enqueue", "agent flush", "agent run", "inventory import", "inventory collect-local", "inventory list", "inventory show", "inventory diff", "updates edge", "updates list", "asset add", "asset list", "target add", "target list", "task create", "task list", "task run", "task show", "events list":
+	case "siem agents", "siem serve", "siem enroll", "siem revoke", "agent collect", "agent enqueue", "agent flush", "agent run", "inventory import", "inventory collect-local", "inventory list", "inventory show", "inventory diff", "updates edge", "updates list", "asset add", "asset list", "target add", "target list", "task create", "task list", "task run", "task show", "events list":
 	default:
 		return fmt.Errorf("unknown command %q", command)
 	}

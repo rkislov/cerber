@@ -41,7 +41,9 @@ func serviceFixture(t *testing.T, root, configDir, stateDir string, install, sta
 	var attempts atomic.Int64
 	handler := ingest.NewHandler(central)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts.Add(1)
+		if r.URL.Path == "/v1/agent/reports" {
+			attempts.Add(1)
+		}
 		if !allow.Load() {
 			http.Error(w, "offline test", 503)
 			return
@@ -114,6 +116,10 @@ func serviceFixture(t *testing.T, root, configDir, stateDir string, install, sta
 		return errors.Is(e, domain.ErrNotFound) || e == nil && r.ID != queued.ID
 	}, "agent did not acknowledge receipt locally")
 	probe.Close()
+	waitFor(t, 20*time.Second, func() bool {
+		states, e := central.AgentStatuses(ctx, a.ID, "", 10)
+		return e == nil && len(states) == 1 && states[0].LastHeartbeatAt != nil
+	}, "service did not send independent heartbeat")
 	stop()
 	local, err = sqlite.Open(ctx, db)
 	if err != nil {

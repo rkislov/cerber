@@ -108,7 +108,10 @@ func (s *Store) AcceptReport(ctx context.Context, id, hash string, r ingest.Repo
 			return receipt, err
 		}
 		receipt.Duplicate = true
-		return receipt, nil
+		if err = recordReportContact(ctx, tx, id, receipt.SnapshotID, r.Snapshot.CollectedAt, time.Now().UTC()); err != nil {
+			return receipt, err
+		}
+		return receipt, tx.Commit()
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return receipt, err
@@ -175,6 +178,9 @@ func (s *Store) AcceptReport(ctx context.Context, id, hash string, r ingest.Repo
 		return receipt, err
 	}
 	if err = emit("agent.report_received", receipt); err != nil {
+		return receipt, err
+	}
+	if err = recordReportContact(ctx, tx, id, snap.ID, snap.CollectedAt, receipt.ReceivedAt); err != nil {
 		return receipt, err
 	}
 	return receipt, tx.Commit()
