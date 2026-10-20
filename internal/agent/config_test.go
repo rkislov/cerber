@@ -56,3 +56,29 @@ func TestConfigValidationIsOfflineAndDoesNotCreateDatabase(t *testing.T) {
 		t.Fatal("accepted trailing data")
 	}
 }
+
+func TestHeartbeatConfigDefaultsAndBounds(t *testing.T) {
+	c := configFixture(t)
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c.HeartbeatInterval = "1m"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, a := range c.Args() {
+		if a == "-heartbeat-interval" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("configured interval omitted")
+	}
+	for _, value := range []string{"1s", "2h", "bad"} {
+		c.HeartbeatInterval = value
+		if c.Validate() == nil {
+			t.Fatal("invalid heartbeat interval", value)
+		}
+	}
+}

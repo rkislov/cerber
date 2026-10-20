@@ -16,6 +16,7 @@ import (
 // Config contains deployment settings, never the bearer token itself. All paths
 // are absolute so SCM/systemd working directories cannot redirect state or secrets.
 type Config struct {
+	HeartbeatInterval      string `json:"heartbeat_interval,omitempty"`
 	SchemaVersion          int    `json:"schema_version"`
 	Database               string `json:"database"`
 	AssetID                string `json:"asset_id"`
@@ -71,6 +72,12 @@ func LoadConfig(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.HeartbeatInterval != "" {
+		interval, err := time.ParseDuration(c.HeartbeatInterval)
+		if err != nil || interval < time.Minute || interval > time.Hour {
+			return fmt.Errorf("heartbeat interval must be 1m–1h")
+		}
+	}
 	if c.SchemaVersion != 1 || strings.TrimSpace(c.AssetID) == "" || len(c.AssetID) > 256 {
 		return fmt.Errorf("config requires schema version 1 and a local asset ID")
 	}
@@ -129,6 +136,9 @@ func (c Config) ValidateInputs() error {
 }
 func (c Config) Args() []string {
 	args := []string{"-db", c.Database, "agent", "run", "-asset", c.AssetID, "-credentials", c.Credentials, "-server", c.Server, "-interval", c.Interval}
+	if c.HeartbeatInterval != "" {
+		args = append(args, "-heartbeat-interval", c.HeartbeatInterval)
+	}
 	if c.CACert != "" {
 		args = append(args, "-ca-cert", c.CACert)
 	}

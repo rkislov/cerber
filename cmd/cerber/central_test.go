@@ -141,3 +141,71 @@ func nativeAgent(t *testing.T, family string) {
 		t.Fatal(s.Coverage)
 	}
 }
+
+func TestAgentRegistryCLIUsesServerObservationsAndPagination(t *testing.T) {
+	root := t.TempDir()
+	db := filepath.Join(root, "server.db")
+	ctx := context.Background()
+	s, err := sqlite.Open(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset, err := (app.Service{Repo: s}).AddAsset(ctx, "192.0.2.99", "host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := ingest.Hash([]byte(strings.Repeat("a", 64)))
+	for _, id := range []string{"agent-a", "agent-b", "agent-c"} {
+		if err = s.RegisterAgent(ctx, id, asset.ID, hash); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = s.AcceptHeartbeat(ctx, "agent-a", hash, ingest.Heartbeat{SchemaVersion: 1, AgentID: "agent-a", ObservedAt: time.Now(), Platform: "linux", Architecture: "arm64", CollectionStatus: "error", DeliveryStatus: "error"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.RevokeAgent(ctx, "agent-c"); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	type page struct {
+		Agents []ingest.AgentStatus `json:"agents"`
+		Next   string               `json:"next_cursor"`
+	}
+	call := func(args ...string) page {
+		t.Helper()
+		var out, diagnostics bytes.Buffer
+		if err := run(ctx, append([]string{"-db", db, "siem", "agents"}, args...), &out, &diagnostics); err != nil {
+			t.Fatal(err, diagnostics.String())
+		}
+		if bytes.Contains(out.Bytes(), []byte(hash)) || bytes.Contains(out.Bytes(), []byte("token")) {
+			t.Fatal("credential details in status")
+		}
+		var value page
+		if err = json.Unmarshal(out.Bytes(), &value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	first := call("-limit", "1")
+	if len(first.Agents) != 1 || first.Next != "agent-a" || first.Agents[0].ContactStatus != "online" || first.Agents[0].InventoryStatus != "missing" || first.Agents[0].Health.CollectionStatus != "error" {
+		t.Fatal(first)
+	}
+	second := call("-limit", "1", "-after", first.Next)
+	if len(second.Agents) != 1 || second.Next != "agent-b" || second.Agents[0].ContactStatus != "never_seen" {
+		t.Fatal(second)
+	}
+	last := call("-limit", "1", "-after", second.Next)
+	if len(last.Agents) != 1 || last.Next != "" || last.Agents[0].ContactStatus != "revoked" {
+		t.Fatal(last)
+	}
+	missing := call("-asset", "other")
+	if len(missing.Agents) != 0 {
+		t.Fatal(missing)
+	}
+	var out bytes.Buffer
+	for _, args := range [][]string{{"-limit", "1001"}, {"-offline-after", "1s"}, {"-after", "invalid cursor"}} {
+		if err = run(ctx, append([]string{"-db", db, "siem", "agents"}, args...), &out, &out); err == nil {
+			t.Fatal("invalid query accepted", args)
+		}
+	}
+}

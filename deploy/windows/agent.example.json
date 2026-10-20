@@ -9,5 +9,6 @@
   "check_windows_updates": true,
   "check_package_updates": false,
   "refresh_package_metadata": false,
-  "package_manager": "auto"
+  "package_manager": "auto",
+  "heartbeat_interval": "1m"
 }
