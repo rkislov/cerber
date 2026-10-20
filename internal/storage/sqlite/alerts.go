@@ -165,7 +165,7 @@ func (s *Store) Alerts(ctx context.Context, state string, before int64, limit in
 }
 func (s *Store) AcknowledgeAlert(ctx context.Context, id, actor string) (alerts.Alert, error) {
 	var empty alerts.Alert
-	if id == "" || len(id) > 256 || (actor != "administrator" && actor != "cli") {
+	if id == "" || len(id) > 256 || len(actor) > 64 {
 		return empty, fmt.Errorf("invalid acknowledgement")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -173,6 +173,9 @@ func (s *Store) AcknowledgeAlert(ctx context.Context, id, actor string) (alerts.
 		return empty, err
 	}
 	defer tx.Rollback()
+	if err = checkAdmin(ctx, tx, false); err != nil {
+		return empty, err
+	}
 	v, err := scanAlert(tx.QueryRowContext(ctx, alertSelect+"WHERE a.id=?", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, domain.ErrNotFound
