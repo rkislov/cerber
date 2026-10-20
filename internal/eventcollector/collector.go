@@ -5,6 +5,8 @@ package eventcollector
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -286,7 +288,12 @@ func Cycle(ctx context.Context, spool Spool, sender Sender, agent string, source
 			continue
 		}
 		b := telemetry.Batch{SchemaVersion: 1, AgentID: agent, Records: records}
-		b.ID = telemetry.ID(agent, source.Name(), c, records[len(records)-1].Cursor)
+		var nonce [32]byte
+		if _, e = rand.Read(nonce[:]); e != nil {
+			onError(e)
+			continue
+		}
+		b.ID = hex.EncodeToString(nonce[:])
 		if e = spool.Enqueue(ctx, b, source.Name(), c, records[len(records)-1].Cursor); e != nil {
 			onError(e)
 		}
