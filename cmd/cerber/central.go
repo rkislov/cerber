@@ -17,6 +17,7 @@ import (
 	"github.com/rkislov/cerber/internal/domain"
 	"github.com/rkislov/cerber/internal/ingest"
 	"github.com/rkislov/cerber/internal/inventory"
+	"github.com/rkislov/cerber/internal/jobs"
 	"github.com/rkislov/cerber/internal/storage/sqlite"
 	"io"
 	"net/http"
@@ -137,6 +138,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		if *checkEvery < 5*time.Second || *checkEvery > time.Hour {
 			return fmt.Errorf("monitor interval must be 5s–1h")
 		}
+		jobMonitor := &jobs.Monitor{}
 		monitor := &alerts.Monitor{Policy: policy, Interval: *checkEvery}
 		mux := http.NewServeMux()
 		mux.Handle("/v1/agent/", ingest.NewHandler(store))
@@ -149,7 +151,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			if err != nil {
 				return err
 			}
-			handler, err := admin.NewHandler(store, token, admin.Options{SecureCookies: *cert != "", Policy: policy, Monitor: monitor.Snapshot})
+			handler, err := admin.NewHandler(store, token, admin.Options{SecureCookies: *cert != "", Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot})
 			if err != nil {
 				return err
 			}
@@ -160,7 +162,13 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
+			schedulerDone := make(chan struct{})
+			go func() {
+				defer close(schedulerDone)
+				jobMonitor.Run(monitorCtx, store, func(err error) { fmt.Fprintf(errOut, "job scheduler: %v\n", err) })
+			}()
 			monitor.Run(monitorCtx, store, func(err error) { fmt.Fprintf(errOut, "alert monitor: %v\n", err) })
+			<-schedulerDone
 		}()
 		defer func() { stop(); <-done }()
 		return serveHTTP(ctx, mux, *listen, *cert, *key, "SIEM receiver", 2*time.Minute, 2*time.Minute, errOut)
@@ -362,6 +370,35 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		agent.RunHeartbeats(heartbeatCtx, store, client, c.AgentID, health, *heartbeat, func(err error) { fmt.Fprintf(errOut, "agent heartbeat: %v\n", err) })
 	}()
 	defer func() { stopHeartbeat(); <-heartbeatDone }()
+	worker := agent.Worker{Store: store, Client: client, AgentID: c.AgentID, Execute: func(jobCtx context.Context, job jobs.Job) jobs.Result {
+		fail := func(code string) jobs.Result { return jobs.Result{JobID: job.ID, Status: "failed", Code: code} }
+		count, size, e := store.QueueUsage(jobCtx)
+		if e != nil {
+			return fail("collection_failed")
+		}
+		if count >= 100 || size >= 256<<20 {
+			return fail("queue_full")
+		}
+		svc := app.InventoryService{Store: store, Assets: store}
+		var snapshot inventory.Snapshot
+		switch runtime.GOOS {
+		case "windows":
+			snapshot, e = svc.CollectLocal(jobCtx, *asset, windows.Collector{CheckAvailable: job.Kind == "updates"})
+		case "linux":
+			snapshot, e = svc.CollectLocal(jobCtx, *asset, linuxcollector.Collector{CheckAvailable: job.Kind == "updates", RefreshMetadata: job.RefreshMetadata, Manager: *manager})
+		default:
+			return fail("unsupported_platform")
+		}
+		health.Collected(snapshot, e)
+		if e != nil {
+			return fail("collection_failed")
+		}
+		report, e := store.QueueInventory(jobCtx, c.AgentID, snapshot.ID)
+		if e != nil {
+			return fail("collection_failed")
+		}
+		return agent.JobResult(job, snapshot, report.ID)
+	}}
 	nextCollection := time.Time{}
 	retry := 30 * time.Second
 	for {
@@ -374,6 +411,9 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			fmt.Fprintf(errOut, "agent delivery: %v\n", deliveryErr)
 		} else if n > 0 {
 			fmt.Fprintf(errOut, "agent delivered %d report(s)\n", n)
+		}
+		if err := worker.Step(ctx); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(errOut, "agent job: %v\n", err)
 		}
 		if !time.Now().Before(nextCollection) {
 			r, err := queue()

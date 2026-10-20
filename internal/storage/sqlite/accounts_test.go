@@ -111,7 +111,7 @@ func TestVersionSixAccountMigration(t *testing.T) {
 		t.Fatal(n, err)
 	}
 	var version int
-	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 7 {
+	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 8 {
 		t.Fatal(version, err)
 	}
 }
