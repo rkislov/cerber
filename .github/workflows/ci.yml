@@ -34,6 +34,12 @@ jobs:
         run: node --check internal/admin/static/app.js
       - name: Check agent group JavaScript
         run: node --check internal/admin/static/groups.js
+      - name: Check event console JavaScript
+        run: node --check internal/admin/static/events.js
+      - name: Native event sources and incremental cursors
+        env:
+          CERBER_NATIVE_SMOKE: '1'
+        run: go test ./internal/eventcollector -run TestNativeEventRead -count=1 -v
       - run: go mod verify
       - run: go test ./...
       - name: Native Linux package inventory and cached APT candidates

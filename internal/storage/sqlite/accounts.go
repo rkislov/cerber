@@ -229,7 +229,7 @@ func (s *Store) AdminLogin(ctx context.Context, u admin.User) error {
 			return admin.ErrForbidden
 		}
 	}
-	e, err := event.New("admin.session.login", actor, map[string]string{"actor": actor})
+	e, err := event.New("admin.session.login", actor, map[string]string{"actor": actor, "auth_method": u.AuthMethod})
 	if err != nil {
 		return err
 	}

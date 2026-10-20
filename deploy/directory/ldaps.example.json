@@ -1,0 +1,15 @@
+{
+  "url": "ldaps://dc01.example.test:636",
+  "base_dn": "DC=example,DC=test",
+  "bind_dn": "CN=cerber-reader,OU=Service Accounts,DC=example,DC=test",
+  "password_file": "/etc/cerber/directory-bind.secret",
+  "ca_cert": "/etc/cerber/domain-ca.pem",
+  "users": {
+    "domain-operator": "roman@example.test",
+    "domain-viewer": "auditor@example.test"
+  },
+  "role_groups": {
+    "operator": "CN=Cerber Operators,OU=Groups,DC=example,DC=test",
+    "viewer": "CN=Cerber Viewers,OU=Groups,DC=example,DC=test"
+  }
+}

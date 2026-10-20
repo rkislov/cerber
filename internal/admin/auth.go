@@ -60,22 +60,25 @@ func randomToken() (string, error) {
 }
 
 type session struct {
-	Expires time.Time
-	CSRF    string
-	User    User
+	Expires          time.Time
+	CSRF             string
+	User             User
+	Directory        bool
+	DirectoryChecked time.Time
 }
 type attempts struct {
 	Since time.Time
 	Count int
 }
 type authentication struct {
-	mu       sync.Mutex
-	key      [32]byte
-	sessions map[[32]byte]session
-	attempts map[string]attempts
-	secure   bool
-	store    Store
-	workers  chan struct{}
+	directory Directory
+	mu        sync.Mutex
+	key       [32]byte
+	sessions  map[[32]byte]session
+	attempts  map[string]attempts
+	secure    bool
+	store     Store
+	workers   chan struct{}
 }
 
 func newAuth(key string, secure bool, store Store) *authentication {
@@ -143,7 +146,11 @@ func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
 		if e == nil {
 			hash = u.PasswordHash
 		}
-		valid = CheckPassword(hash, v.Password) && e == nil && !u.Disabled
+		if a.directory != nil && a.directory.Mapped(v.Username) {
+			valid = e == nil && !u.Disabled && a.directory.Authenticate(r.Context(), v.Username, v.Password, u.Role) == nil
+		} else {
+			valid = CheckPassword(hash, v.Password) && e == nil && !u.Disabled
+		}
 		user = u
 	}
 	if !valid {
@@ -151,6 +158,10 @@ func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user.PasswordHash = ""
+	user.AuthMethod = "local"
+	if a.directory != nil && a.directory.Mapped(user.Username) {
+		user.AuthMethod = "ldaps"
+	}
 	if err = a.store.AdminLogin(r.Context(), user); err != nil {
 		http.Error(w, "authentication unavailable", 503)
 		return
@@ -176,7 +187,7 @@ func (a *authentication) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session limit reached", 503)
 		return
 	}
-	a.sessions[sha256.Sum256([]byte(cookie))] = session{Expires: now.Add(8 * time.Hour), CSRF: csrf, User: user}
+	a.sessions[sha256.Sum256([]byte(cookie))] = session{Expires: now.Add(8 * time.Hour), CSRF: csrf, User: user, Directory: a.directory != nil && a.directory.Mapped(user.Username), DirectoryChecked: now}
 	http.SetCookie(w, &http.Cookie{Name: "cerber_admin", Value: cookie, Path: "/admin", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: 8 * 60 * 60})
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -187,10 +198,12 @@ func (a *authentication) current(r *http.Request) (session, bool) {
 	}
 	hash := sha256.Sum256([]byte(cookie.Value))
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	v, ok := a.sessions[hash]
+	a.mu.Unlock()
 	if ok && time.Now().After(v.Expires) {
+		a.mu.Lock()
 		delete(a.sessions, hash)
+		a.mu.Unlock()
 		ok = false
 	}
 	if ok {
@@ -205,8 +218,30 @@ func (a *authentication) current(r *http.Request) (session, bool) {
 				v.User = u
 			}
 		}
+		if ok && v.Directory && time.Since(v.DirectoryChecked) >= 30*time.Second {
+			select {
+			case a.workers <- struct{}{}:
+				err := a.directory.Check(r.Context(), v.User.Username, v.User.Role)
+				<-a.workers
+				ok = err == nil
+			default:
+				ok = false
+			}
+			if ok {
+				v.DirectoryChecked = time.Now()
+				a.mu.Lock()
+				if _, exists := a.sessions[hash]; exists {
+					a.sessions[hash] = v
+				} else {
+					ok = false
+				}
+				a.mu.Unlock()
+			}
+		}
 		if !ok {
+			a.mu.Lock()
 			delete(a.sessions, hash)
+			a.mu.Unlock()
 		}
 	}
 	return v, ok
