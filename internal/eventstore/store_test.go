@@ -242,3 +242,38 @@ func TestJournalQuotaRollsBackWholeBatch(t *testing.T) {
 		t.Fatal("partially committed full journal", v)
 	}
 }
+
+func TestSourceRereadPreservesFirstObservation(t *testing.T) {
+	ctx := context.Background()
+	s, e := Open(ctx, ":memory:")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	a := telemetry.ID("agent")
+	b := batch(t, a, 0, "failure")
+	b.Records[0].Data = json.RawMessage(`{"one":9007199254740993,"two":{"b":2,"a":1}}`)
+	if _, e = s.Accept(ctx, a, "asset", b); e != nil {
+		t.Fatal(e)
+	}
+	observed := b.Records[0].ObservedAt
+	b.ID = telemetry.ID("new batch after spool recovery")
+	b.Records[0].ObservedAt = observed.Add(time.Hour)
+	b.Records[0].Data = json.RawMessage(`{"two":{"a":1,"b":2},"one":9007199254740993}`)
+	if _, e = s.Accept(ctx, a, "asset", b); e != nil {
+		t.Fatal(e)
+	}
+	raw, e := s.ReadRaw(ctx, telemetry.ID(a, b.Records[0].ID))
+	if e != nil || !raw.Raw.ObservedAt.Equal(observed) {
+		t.Fatal(raw, e)
+	}
+	b.ID = telemetry.ID("tampered native event")
+	b.Records[0].Data = json.RawMessage(`{"two":{"a":1,"b":2},"one":9007199254740992}`)
+	if _, e = s.Accept(ctx, a, "asset", b); !errors.Is(e, telemetry.ErrConflict) {
+		t.Fatal("mutable source data", e)
+	}
+	v, _ := s.Status(ctx)
+	if v.Raw != 1 {
+		t.Fatal(v)
+	}
+}

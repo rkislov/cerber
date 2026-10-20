@@ -4,6 +4,7 @@
 package eventstore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -114,7 +115,13 @@ func (s *Store) Accept(ctx context.Context, agent, asset string, b telemetry.Bat
 		var stored string
 		e = tx.QueryRowContext(ctx, "SELECT payload FROM raw_events WHERE id=? OR (agent_id=? AND source=? AND cursor=?)", id, agent, r.Source, r.Cursor).Scan(&stored)
 		if e == nil {
-			if stored != string(p) {
+			// A source reread after deliberate spool recovery has a new observation
+			// time. Keep the first observation; identity, cursor and source data stay immutable.
+			var previous telemetry.Raw
+			if json.Unmarshal([]byte(stored), &previous) != nil {
+				return receipt, telemetry.ErrConflict
+			}
+			if previous.ID != r.ID || previous.Source != r.Source || previous.Cursor != r.Cursor || !equivalentSourceJSON(previous.Data, r.Data) {
 				return receipt, telemetry.ErrConflict
 			}
 			continue
@@ -356,4 +363,24 @@ func (s *Store) Run(ctx context.Context, onError func(error)) {
 		case <-t.C:
 		}
 	}
+}
+
+// JSON field order is not part of a native event's identity. UseNumber preserves
+// large integers while comparing structured records; the original first payload stays intact.
+func equivalentSourceJSON(a, b json.RawMessage) bool {
+	canonical := func(p json.RawMessage) ([]byte, error) {
+		d := json.NewDecoder(bytes.NewReader(p))
+		d.UseNumber()
+		var v any
+		if e := d.Decode(&v); e != nil {
+			return nil, e
+		}
+		return json.Marshal(v)
+	}
+	x, e := canonical(a)
+	if e != nil {
+		return false
+	}
+	y, e := canonical(b)
+	return e == nil && bytes.Equal(x, y)
 }
