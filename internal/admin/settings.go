@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: Apache-2.0
+package admin
+
+import (
+	"context"
+	"errors"
+	"github.com/rkislov/cerber/internal/integrations"
+	"net/http"
+	"time"
+)
+
+func integrationManagement(store *integrations.Store, w http.ResponseWriter, r *http.Request, user User, slots chan struct{}) bool {
+	if r.URL.Path != "/admin/api/settings" && r.URL.Path != "/admin/api/settings/test-smtp" && r.URL.Path != "/admin/api/settings/test-threatfox" {
+		return false
+	}
+	if user.Role != "administrator" || user.Username == "" {
+		http.Error(w, "forbidden", 403)
+		return true
+	}
+	if store == nil {
+		if r.Method == "GET" && r.URL.Path == "/admin/api/settings" {
+			writeJSON(w, integrations.View{Configured: false})
+		} else {
+			http.Error(w, "settings storage is not configured", 503)
+		}
+		return true
+	}
+	if r.URL.Path == "/admin/api/settings" {
+		if r.Method == "GET" {
+			writeJSON(w, store.View())
+			return true
+		}
+		var c integrations.Command
+		if !decodeJSON(w, r, 16384, &c) {
+			return true
+		}
+		if e := store.Save(c, user.Username); e != nil {
+			status := 503
+			if errors.Is(e, integrations.ErrInvalid) {
+				status = 400
+			}
+			if errors.Is(e, integrations.ErrConflict) {
+				status = 409
+			}
+			http.Error(w, http.StatusText(status), status)
+			return true
+		}
+		writeJSON(w, store.View())
+		return true
+	}
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", 405)
+		return true
+	}
+	select {
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
+	default:
+		http.Error(w, "connection probes busy", 429)
+		return true
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	var e error
+	if r.URL.Path == "/admin/api/settings/test-smtp" {
+		e = store.ProbeSMTP(ctx)
+	} else {
+		e = store.ProbeThreatFox(ctx)
+	}
+	if errors.Is(e, integrations.ErrInvalid) {
+		e = errors.New("Сначала сохраните адрес SMTP или ключ ThreatFox для выбранной проверки.")
+	}
+	if e != nil {
+		writeJSON(w, map[string]any{"ok": false, "message": e.Error()})
+	} else {
+		writeJSON(w, map[string]any{"ok": true, "message": "Соединение и авторизация проверены. Сообщения не отправлялись."})
+	}
+	return true
+}

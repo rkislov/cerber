@@ -2,13 +2,16 @@
 package admin
 
 import (
+	"context"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
 	"github.com/rkislov/cerber/internal/alerts"
 	"github.com/rkislov/cerber/internal/domain"
+	"github.com/rkislov/cerber/internal/health"
 	"github.com/rkislov/cerber/internal/ingest"
+	"github.com/rkislov/cerber/internal/integrations"
 	"github.com/rkislov/cerber/internal/jobs"
 	"io"
 	"mime"
@@ -23,6 +26,8 @@ import (
 var content embed.FS
 
 type Options struct {
+	System        func(context.Context) health.Report
+	Settings      *integrations.Store
 	PatchEnabled  bool
 	Events        EventStore
 	Directory     Directory
@@ -51,19 +56,20 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 		}
 	}
 	archiveSlots := make(chan struct{}, 2)
+	integrationSlots := make(chan struct{}, 2)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'")
 		path := r.URL.Path
-		if r.Method == "GET" && (path == "/admin" || path == "/admin/" || path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" || path == "/admin/lifecycle.js" || path == "/admin/app.css" || path == "/admin/icon.svg") {
+		if r.Method == "GET" && (path == "/admin" || path == "/admin/" || path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" || path == "/admin/settings.js" || path == "/admin/lifecycle.js" || path == "/admin/app.css" || path == "/admin/icon.svg") {
 			name := "index.html"
 			if path == "/admin/icon.svg" {
 				name = "icon.svg"
 				w.Header().Set("Content-Type", "image/svg+xml")
 			}
-			if path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" || path == "/admin/lifecycle.js" {
+			if path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" || path == "/admin/settings.js" || path == "/admin/lifecycle.js" {
 				name = strings.TrimPrefix(path, "/admin/")
 				w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			} else if path == "/admin/app.css" {
@@ -130,6 +136,9 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 			return
 		}
 		r = r.WithContext(WithPrincipal(r.Context(), session.User))
+		if integrationManagement(options.Settings, w, r, session.User, integrationSlots) {
+			return
+		}
 		if r.Method == "POST" && session.User.Role == "analyst" && !strings.HasPrefix(path, "/admin/api/incidents") && path != "/admin/api/detections" {
 			http.Error(w, "forbidden", 403)
 			return
@@ -173,6 +182,16 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 			return
 		}
 		switch path {
+		case "/admin/api/system":
+			if r.Method != "GET" {
+				break
+			}
+			if options.System == nil {
+				http.Error(w, "system monitoring unavailable", 503)
+				return
+			}
+			writeJSON(w, options.System(r.Context()))
+			return
 		case "/admin/api/overview":
 			if r.Method != "GET" {
 				break

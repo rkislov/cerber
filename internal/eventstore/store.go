@@ -28,6 +28,7 @@ var incidentsSchema string
 var lifecycleSchema string
 
 type Store struct {
+	path            string
 	db              *sql.DB
 	lifecycleMu     sync.Mutex
 	archiveDir      string
@@ -50,7 +51,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db}
+	s := &Store{db: db, path: path}
 	for _, q := range []string{"PRAGMA busy_timeout=5000", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL"} {
 		if _, e = db.ExecContext(ctx, q); e != nil {
 			db.Close()
