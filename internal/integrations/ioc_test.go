@@ -4,6 +4,7 @@ package integrations
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"os"
 	"path/filepath"
@@ -89,4 +90,18 @@ func testStore(t *testing.T) *Store {
 		t.Fatal(e)
 	}
 	return s
+}
+
+func TestIOCStatusCountsUniqueIPsSeparatelyFromPorts(t *testing.T) {
+	s := testStore(t)
+	w, e := OpenWorker(s, filepath.Join(t.TempDir(), "runtime.db"), nil, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer w.Close()
+	w.index = NewIndex([]IOC{{ID: "1", Type: "ip:port", Value: "192.0.2.1:443"}, {ID: "2", Type: "ip:port", Value: "192.0.2.1:80"}, {ID: "3", Type: "ip", Value: "192.0.2.1"}})
+	status := w.Status(context.Background())
+	if status.IPs != 1 || status.IPPorts != 2 {
+		t.Fatal(status)
+	}
 }

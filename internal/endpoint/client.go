@@ -110,7 +110,9 @@ func (l *Local) Step(ctx context.Context, client Client) error {
 	if valid == nil && b.Policy.Mode == "confirm" {
 		desired = b.Blocks
 	}
-	l.state.Report.Blocks = map[string]string{}
+	if l.state.Report.Blocks == nil {
+		l.state.Report.Blocks = map[string]string{}
+	}
 	keep := []Block{}
 	for _, old := range l.state.Blocks {
 		found := false
@@ -199,6 +201,7 @@ func (l *Local) Step(ctx context.Context, client Client) error {
 		}
 		l.state.Signed = s
 		l.state.Report.Findings = nil
+		l.state.Report.Blocks = map[string]string{}
 		l.state.Report.PolicyVersion = next.Policy.Version
 		l.state.NextSync = now.Add(time.Minute)
 		if e = l.save(); e != nil {
