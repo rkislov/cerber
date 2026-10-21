@@ -92,3 +92,27 @@ func TestNVDMetricsAndCrossReferenceDedup(t *testing.T) {
 		t.Fatal(matches)
 	}
 }
+
+func TestNVDApplicabilityKeepsEnvironmentUncertainAndRejectsFixedVersion(t *testing.T) {
+	key := CPE("cpe:/a:openbsd:openssh:9.6p1")
+	m := cpeMatch{Vulnerable: true, Criteria: "cpe:2.3:a:openbsd:openssh:*:*:*:*:*:*:*:*", StartIncluding: "8.5p1", EndExcluding: "9.8p1"}
+	nodes := []nvdNode{{Nodes: []nvdNode{{Operator: "OR", Matches: []cpeMatch{m}}}}}
+	ok, conditional, _ := applicability(nodes, key, "")
+	if !ok || conditional {
+		t.Fatal(ok, conditional)
+	}
+	nodes[0].Operator = "AND"
+	ok, conditional, _ = applicability(nodes, key, "")
+	if !ok || !conditional {
+		t.Fatal("environment treated as verified")
+	}
+	nodes[0].Operator = ""
+	ok, conditional, _ = applicability(nodes, key, "This outcome occurs only on the client side.")
+	if !ok || !conditional {
+		t.Fatal("client-only treated as server proof")
+	}
+	nodes[0].Nodes[0].Matches[0].EndExcluding = "9.6p1"
+	if ok, _, _ := applicability(nodes, key, ""); ok {
+		t.Fatal("fixed version candidate")
+	}
+}
