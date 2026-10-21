@@ -549,6 +549,19 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		agent.RunHeartbeats(heartbeatCtx, store, client, c.AgentID, health, *heartbeat, func(err error) { fmt.Fprintf(errOut, "agent heartbeat: %v\n", err) })
 	}()
 	defer func() { stopHeartbeat(); <-heartbeatDone }()
+	var endpointAgent *endpoint.Local
+	if *endpointState != "" {
+		var e error
+		endpointAgent, e = endpoint.OpenLocal(*endpointState, *endpointKey, c.AgentID)
+		if e != nil {
+			return e
+		}
+	}
+	if endpointAgent != nil {
+		for i, source := range sources {
+			sources[i] = eventcollector.ObservedSource{Source: source, Observe: endpointAgent.ObserveEvents}
+		}
+	}
 	var eventSpool *eventstore.Store
 	if len(sources) > 0 {
 		if store.Path() == ":memory:" || strings.HasPrefix(store.Path(), "file:") {
@@ -621,14 +634,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		}
 		return agent.JobResult(job, snapshot, report.ID)
 	}}
-	var endpointAgent *endpoint.Local
-	if *endpointState != "" {
-		var e error
-		endpointAgent, e = endpoint.OpenLocal(*endpointState, *endpointKey, c.AgentID)
-		if e != nil {
-			return e
-		}
-	}
+
 	nextCollection := time.Time{}
 	retry := 30 * time.Second
 	for {

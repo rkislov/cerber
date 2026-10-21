@@ -189,3 +189,23 @@ func TestCacheCleanupKeepsOnlyCommittedVersion(t *testing.T) {
 		t.Fatal("unrelated file removed")
 	}
 }
+
+func TestLocalCachedEventIOCMatchingIsPassiveAndExpires(t *testing.T) {
+	now := time.Now().UTC()
+	l := &Local{agent: "agent", seen: map[string]bool{}}
+	l.eventIndex.Store(integrations.NewIndex([]integrations.IOC{{ID: "test", Type: "ip:port", Value: "192.0.2.4:443", First: now.Add(-time.Hour), Last: now}}))
+	l.validUntil.Store(now.Add(time.Hour).Unix())
+	data, _ := json.Marshal(map[string]any{"event_id": 4625, "time": now.Format(time.RFC3339Nano), "provider": "Microsoft-Windows-Security-Auditing", "fields": map[string]string{"IpAddress": "192.0.2.4", "TargetUserName": "fixture"}})
+	raw := telemetry.Raw{ID: telemetry.ID("event-fixture"), Source: "windows:Security", ObservedAt: now, Data: data}
+	l.ObserveEvents([]telemetry.Raw{raw})
+	l.ObserveEvents([]telemetry.Raw{raw})
+	if l.matchCount.Load() != 1 {
+		t.Fatal("cache not used or cursor replay counted twice")
+	}
+	l.validUntil.Store(now.Add(-time.Second).Unix())
+	raw.ID = telemetry.ID("second-fixture")
+	l.ObserveEvents([]telemetry.Raw{raw})
+	if l.matchCount.Load() != 1 {
+		t.Fatal("expired policy still matched")
+	}
+}

@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,11 +35,16 @@ type localState struct {
 	NextSync    time.Time          `json:"next_sync"`
 }
 type Local struct {
-	apply func(context.Context, Block, bool) error
-	path  string
-	key   ed25519.PublicKey
-	agent string
-	state localState
+	eventIndex atomic.Pointer[integrations.Index]
+	validUntil atomic.Int64
+	matchCount atomic.Uint64
+	seenMu     sync.Mutex
+	seen       map[string]bool
+	apply      func(context.Context, Block, bool) error
+	path       string
+	key        ed25519.PublicKey
+	agent      string
+	state      localState
 }
 
 func OpenLocal(path, keyPath, agent string) (*Local, error) {
@@ -81,6 +88,12 @@ func OpenLocal(path, keyPath, agent string) (*Local, error) {
 	if l.state.FeedVersion != "" && snapshotID(l.state.IOCs) != l.state.FeedVersion {
 		return nil, fmt.Errorf("IOC cache integrity failed")
 	}
+	l.matchCount.Store(l.state.Report.EventIOCMatches)
+	l.seen = map[string]bool{}
+	if bundle, e := l.state.Signed.Verify(l.key, l.agent, time.Now().UTC()); e == nil {
+		l.eventIndex.Store(integrations.NewIndex(l.state.IOCs))
+		l.validUntil.Store(bundle.Expires.Unix())
+	}
 	return l, nil
 }
 func (l *Local) save() error {
@@ -118,6 +131,7 @@ func (l *Local) save() error {
 }
 func (l *Local) Step(ctx context.Context, client Client) error {
 	now := time.Now().UTC()
+	l.state.Report.EventIOCMatches = l.matchCount.Load()
 	desired := []Block{}
 	b, valid := l.state.Signed.Verify(l.key, l.agent, now)
 	if valid == nil && b.Policy.Mode == "confirm" {
@@ -198,6 +212,7 @@ func (l *Local) Step(ctx context.Context, client Client) error {
 				}
 			}
 			l.state.IOCs = next.IOCs
+			l.eventIndex.Store(integrations.NewIndex(next.IOCs))
 			l.state.FeedVersion = next.FeedVersion
 		} else if next.FeedVersion != l.state.FeedVersion {
 			return fmt.Errorf("IOC snapshot missing")
@@ -213,6 +228,7 @@ func (l *Local) Step(ctx context.Context, client Client) error {
 			l.state.NextFeed = now.Add(time.Duration(next.Policy.SyncMinutes) * time.Minute)
 		}
 		l.state.Signed = s
+		l.validUntil.Store(next.Expires.Unix())
 		l.state.Report.Findings = nil
 		l.state.Report.Blocks = map[string]string{}
 		l.state.Report.PolicyVersion = next.Policy.Version
@@ -275,4 +291,30 @@ func (l *Local) firewall(ctx context.Context, b Block, add bool) error {
 		return l.apply(ctx, b, add)
 	}
 	return firewall(ctx, b, add)
+}
+
+// ObserveEvents evaluates cached IP/domain/URL IOCs locally; original events still use the durable source spool.
+func (l *Local) ObserveEvents(records []telemetry.Raw) {
+	index := l.eventIndex.Load()
+	if index == nil || time.Now().Unix() >= l.validUntil.Load() {
+		return
+	}
+	for _, r := range records {
+		n := telemetry.Normalize(telemetry.RawRecord{Raw: r, AgentID: l.agent, ReceivedAt: time.Now().UTC()})
+		if len(index.Match(n)) == 0 {
+			continue
+		}
+		l.seenMu.Lock()
+		if l.seen == nil {
+			l.seen = map[string]bool{}
+		}
+		if !l.seen[r.ID] {
+			if len(l.seen) >= 100000 {
+				l.seen = map[string]bool{}
+			}
+			l.seen[r.ID] = true
+			l.matchCount.Add(1)
+		}
+		l.seenMu.Unlock()
+	}
 }
