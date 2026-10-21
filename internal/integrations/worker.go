@@ -9,6 +9,7 @@ import (
 	"github.com/rkislov/cerber/internal/health"
 	_ "modernc.org/sqlite"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -25,6 +26,11 @@ type EventEngine interface {
 	ScanIOC(context.Context, *Index, string) error
 }
 type WorkerStatus struct {
+	IPs       int    `json:"ips"`
+	IPPorts   int    `json:"ip_ports"`
+	Domains   int    `json:"domains"`
+	URLs      int    `json:"urls"`
+	Hashes    int    `json:"hashes"`
 	IOCCount  int    `json:"ioc_count"`
 	LastFull  string `json:"last_full"`
 	SyncError string `json:"sync_error"`
@@ -87,7 +93,32 @@ func (w *Worker) Health(ctx context.Context) health.Database {
 func (w *Worker) Status(ctx context.Context) WorkerStatus {
 	w.mu.Lock()
 	s := w.status
+	index := w.index
 	w.mu.Unlock()
+	if index != nil {
+		ips := map[string]bool{}
+		for k, values := range index.Values {
+			if strings.HasPrefix(k, "ip_observed:") {
+				ips[strings.TrimPrefix(k, "ip_observed:")] = true
+			}
+			if strings.HasPrefix(k, "ip:") {
+				ips[strings.TrimPrefix(k, "ip:")] = true
+			}
+			if strings.HasPrefix(k, "ip:port:") {
+				s.IPPorts += len(values)
+			}
+			if strings.HasPrefix(k, "domain:") {
+				s.Domains += len(values)
+			}
+			if strings.HasPrefix(k, "url:") {
+				s.URLs += len(values)
+			}
+			if strings.HasPrefix(k, "sha256_hash:") || strings.HasPrefix(k, "md5_hash:") {
+				s.Hashes += len(values)
+			}
+		}
+		s.IPs = len(ips)
+	}
 	w.db.QueryRowContext(ctx, "SELECT count(*) FROM mail WHERE state='pending'").Scan(&s.Pending)
 	w.db.QueryRowContext(ctx, "SELECT count(*) FROM mail WHERE state='sent'").Scan(&s.Sent)
 	return s
@@ -252,4 +283,24 @@ func (w *Worker) mail(ctx context.Context) {
 		w.status.MailError = "Письмо не отправлено; очередь сохранена, будет повторная попытка."
 	}
 	w.mu.Unlock()
+}
+
+func (w *Worker) EndpointFeed(ctx context.Context, known string) (string, []IOC, error) {
+	var revision, payload string
+	e := w.db.QueryRowContext(ctx, "SELECT revision FROM feed WHERE id=1").Scan(&revision)
+	if e == nil && revision == known {
+		return revision, nil, nil
+	}
+	if e == nil {
+		e = w.db.QueryRowContext(ctx, "SELECT revision,payload FROM feed WHERE id=1").Scan(&revision, &payload)
+	}
+	if e == sql.ErrNoRows {
+		return "", []IOC{}, nil
+	}
+	if e != nil {
+		return "", nil, e
+	}
+	var items []IOC
+	e = json.Unmarshal([]byte(payload), &items)
+	return revision, items, e
 }

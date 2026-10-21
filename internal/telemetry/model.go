@@ -83,10 +83,13 @@ func (b Batch) Validate() error {
 	return nil
 }
 func ValidSource(s string) bool {
-	return s == "network:cef" || s == "journald" || s == "windows:Security" || s == "windows:System" || s == "windows:Application"
+	return s == "agent:ioc" || s == "network:cef" || s == "journald" || s == "windows:Security" || s == "windows:System" || s == "windows:Application"
 }
 
 type Normalized struct {
+	FilePath        string    `json:"file_path,omitempty"`
+	SHA256          string    `json:"sha256,omitempty"`
+	MD5             string    `json:"md5,omitempty"`
 	Product         string    `json:"product,omitempty"`
 	Device          string    `json:"device,omitempty"`
 	DestinationIP   string    `json:"destination_ip,omitempty"`

@@ -17,6 +17,8 @@ import (
 // Config contains deployment settings, never the bearer token itself. All paths
 // are absolute so SCM/systemd working directories cannot redirect state or secrets.
 type Config struct {
+	EndpointState          string `json:"endpoint_state,omitempty"`
+	EndpointKey            string `json:"endpoint_key,omitempty"`
 	PatchInbox             string `json:"patch_inbox,omitempty"`
 	PatchOutbox            string `json:"patch_outbox,omitempty"`
 	EventSources           string `json:"event_sources,omitempty"`
@@ -76,6 +78,12 @@ func LoadConfig(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if (c.EndpointState == "") != (c.EndpointKey == "") {
+		return fmt.Errorf("both endpoint paths required")
+	}
+	if c.EndpointState != "" && (!filepath.IsAbs(c.EndpointState) || !filepath.IsAbs(c.EndpointKey)) {
+		return fmt.Errorf("absolute endpoint paths required")
+	}
 	if (c.PatchInbox == "") != (c.PatchOutbox == "") {
 		return fmt.Errorf("both patch spool paths are required")
 	}
@@ -162,6 +170,9 @@ func (c Config) Args() []string {
 	args := []string{"-db", c.Database, "agent", "run", "-asset", c.AssetID, "-credentials", c.Credentials, "-server", c.Server, "-interval", c.Interval}
 	if c.HeartbeatInterval != "" {
 		args = append(args, "-heartbeat-interval", c.HeartbeatInterval)
+	}
+	if c.EndpointState != "" {
+		args = append(args, "-endpoint-state", c.EndpointState, "-endpoint-key", c.EndpointKey)
 	}
 	if c.PatchInbox != "" {
 		args = append(args, "-patch-inbox", c.PatchInbox, "-patch-outbox", c.PatchOutbox)

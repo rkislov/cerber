@@ -34,6 +34,8 @@ type Index struct {
 
 func indicatorKey(kind, value string) (string, bool) {
 	switch kind {
+	case "sha256_hash", "md5_hash":
+		return kind + ":" + strings.ToLower(value), true
 	case "ip:port":
 		a, e := netip.ParseAddrPort(value)
 		if e != nil {
@@ -86,6 +88,12 @@ func (x *Index) Match(n telemetry.Normalized) []telemetry.Detection {
 		if key, ok := indicatorKey(k, v); ok {
 			keys[key] = true
 		}
+	}
+	if n.SHA256 != "" {
+		add("sha256_hash", n.SHA256)
+	}
+	if n.MD5 != "" {
+		add("md5_hash", n.MD5)
 	}
 	for _, ip := range []string{n.SourceIP, n.DestinationIP} {
 		add("ip", ip)

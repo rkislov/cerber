@@ -15,6 +15,7 @@ import (
 	linuxcollector "github.com/rkislov/cerber/internal/collector/linux"
 	"github.com/rkislov/cerber/internal/collector/windows"
 	"github.com/rkislov/cerber/internal/domain"
+	"github.com/rkislov/cerber/internal/endpoint"
 	"github.com/rkislov/cerber/internal/eventcollector"
 	"github.com/rkislov/cerber/internal/eventstore"
 	"github.com/rkislov/cerber/internal/health"
@@ -212,6 +213,27 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			}
 			defer integrationWorker.Close()
 		}
+		var responseServer *endpoint.Server
+		if *patchKey != "" {
+			k, e := patch.Private(*patchKey)
+			if e != nil {
+				return e
+			}
+			var feed endpoint.Feed
+			if integrationWorker != nil {
+				feed = integrationWorker
+			}
+			var sink endpoint.EventSink
+			if eventDB != nil {
+				sink = eventDB
+			}
+			responseServer, e = endpoint.Open(store.Path()+".endpoint.db", k, feed, sink)
+			if e != nil {
+				return e
+			}
+			defer responseServer.Close()
+			mux.Handle("/v1/agent/endpoint", responseServer.Handler(store))
+		}
 		var directory admin.Directory
 		if *directoryConfig != "" {
 			var err error
@@ -252,7 +274,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			if eventDB != nil {
 				probes = append(probes, eventDB.Health)
 			}
-			handler, err := admin.NewHandler(store, token, admin.Options{Integrations: integrationWorker, System: health.New(filepath.Dir(store.Path()), probes...), Settings: integrationStore, PatchEnabled: *patchKey != "", SecureCookies: *cert != "" || *secureCookies, Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory, OIDC: identityProvider})
+			handler, err := admin.NewHandler(store, token, admin.Options{Endpoint: responseServer, Integrations: integrationWorker, System: health.New(filepath.Dir(store.Path()), probes...), Settings: integrationStore, PatchEnabled: *patchKey != "", SecureCookies: *cert != "" || *secureCookies, Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory, OIDC: identityProvider})
 			if err != nil {
 				return err
 			}
@@ -271,6 +293,29 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			monitor.Run(monitorCtx, store, func(err error) { fmt.Fprintf(errOut, "alert monitor: %v\n", err) })
 			<-schedulerDone
 		}()
+		responseDone := make(chan struct{})
+		go func() {
+			defer close(responseDone)
+			if responseServer == nil || eventDB == nil {
+				return
+			}
+			t := time.NewTicker(30 * time.Second)
+			defer t.Stop()
+			for {
+				detections, e := eventDB.ReadDetections(monitorCtx, 0, 100)
+				if e == nil {
+					e = responseServer.Observe(monitorCtx, detections)
+				}
+				if e != nil && monitorCtx.Err() == nil {
+					fmt.Fprintln(errOut, "response learning: operation failed")
+				}
+				select {
+				case <-monitorCtx.Done():
+					return
+				case <-t.C:
+				}
+			}
+		}()
 		integrationDone := make(chan struct{})
 		go func() {
 			defer close(integrationDone)
@@ -285,7 +330,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 				eventDB.Run(monitorCtx, func(err error) { fmt.Fprintf(errOut, "event pipeline: %v\n", err) })
 			}
 		}()
-		defer func() { stop(); <-done; <-eventDone; <-integrationDone }()
+		defer func() { stop(); <-done; <-eventDone; <-integrationDone; <-responseDone }()
 		return serveHTTP(ctx, mux, *listen, *cert, *key, "SIEM receiver", 2*time.Minute, 2*time.Minute, errOut)
 	case "siem enroll":
 		asset := f.String("asset", "", "server asset ID")
@@ -333,6 +378,8 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		}
 		return json.NewEncoder(out).Encode(map[string]string{"revoked": *id})
 	}
+	endpointState := f.String("endpoint-state", "", "opt-in private endpoint state file")
+	endpointKey := f.String("endpoint-key", "", "trusted endpoint signing public key")
 	patchInbox := f.String("patch-inbox", "", "opt-in signed patch request directory")
 	patchOutbox := f.String("patch-outbox", "", "read-only executor results directory")
 	credentials := f.String("credentials", "", "agent credentials JSON file")
@@ -368,6 +415,8 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			allowed["interval"] = true
 			allowed["heartbeat-interval"] = true
 			allowed["patch-inbox"] = true
+			allowed["endpoint-state"] = true
+			allowed["endpoint-key"] = true
 			allowed["patch-outbox"] = true
 		}
 	}
@@ -572,6 +621,14 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		}
 		return agent.JobResult(job, snapshot, report.ID)
 	}}
+	var endpointAgent *endpoint.Local
+	if *endpointState != "" {
+		var e error
+		endpointAgent, e = endpoint.OpenLocal(*endpointState, *endpointKey, c.AgentID)
+		if e != nil {
+			return e
+		}
+	}
 	nextCollection := time.Time{}
 	retry := 30 * time.Second
 	for {
@@ -584,6 +641,11 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			fmt.Fprintf(errOut, "agent delivery: %v\n", deliveryErr)
 		} else if n > 0 {
 			fmt.Fprintf(errOut, "agent delivered %d report(s)\n", n)
+		}
+		if endpointAgent != nil {
+			if e := endpointAgent.Step(ctx, client); e != nil && ctx.Err() == nil {
+				fmt.Fprintf(errOut, "endpoint: %v\n", e)
+			}
 		}
 		if *patchInbox != "" {
 			if e := agent.PatchStep(ctx, client, *patchInbox, *patchOutbox); e != nil && ctx.Err() == nil {
