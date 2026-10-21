@@ -50,19 +50,20 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 			}
 		}
 	}
+	archiveSlots := make(chan struct{}, 2)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'")
 		path := r.URL.Path
-		if r.Method == "GET" && (path == "/admin" || path == "/admin/" || path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" || path == "/admin/app.css" || path == "/admin/icon.svg") {
+		if r.Method == "GET" && (path == "/admin" || path == "/admin/" || path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" || path == "/admin/lifecycle.js" || path == "/admin/app.css" || path == "/admin/icon.svg") {
 			name := "index.html"
 			if path == "/admin/icon.svg" {
 				name = "icon.svg"
 				w.Header().Set("Content-Type", "image/svg+xml")
 			}
-			if path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" {
+			if path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" || path == "/admin/lifecycle.js" {
 				name = strings.TrimPrefix(path, "/admin/")
 				w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			} else if path == "/admin/app.css" {
@@ -146,6 +147,18 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 		}
 		if incidentManagement(store, options.Events, w, r, session.User) {
 			return
+		}
+		if lifecycleManagement(options.Events, w, r, session.User, archiveSlots) {
+			return
+		}
+		if path == "/admin/api/security-raw" {
+			select {
+			case archiveSlots <- struct{}{}:
+				defer func() { <-archiveSlots }()
+			default:
+				http.Error(w, "archive reader busy", 429)
+				return
+			}
 		}
 		if eventManagement(options.Events, w, r, session.User) {
 			return

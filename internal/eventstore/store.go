@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/rkislov/cerber/internal/correlation"
@@ -23,7 +24,15 @@ import (
 //go:embed incidents.sql
 var incidentsSchema string
 
-type Store struct{ db *sql.DB }
+//go:embed lifecycle.sql
+var lifecycleSchema string
+
+type Store struct {
+	db              *sql.DB
+	lifecycleMu     sync.Mutex
+	archiveDir      string
+	archiveConfigMu sync.RWMutex
+}
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	if path != ":memory:" {
@@ -41,7 +50,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db}
+	s := &Store{db: db}
 	for _, q := range []string{"PRAGMA busy_timeout=5000", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL"} {
 		if _, e = db.ExecContext(ctx, q); e != nil {
 			db.Close()
@@ -49,7 +58,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		}
 	}
 	var version int
-	if e = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); e != nil || version > 2 {
+	if e = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); e != nil || version > 3 {
 		db.Close()
 		return nil, fmt.Errorf("unsupported event database version: %d: %v", version, e)
 	}
@@ -76,6 +85,13 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		if err != nil {
 			db.Close()
 			return nil, err
+		}
+	}
+	if version < 3 {
+		if _, e = db.ExecContext(ctx, "BEGIN;"+lifecycleSchema+"PRAGMA user_version=3;COMMIT;"); e != nil {
+			db.ExecContext(ctx, "ROLLBACK")
+			db.Close()
+			return nil, e
 		}
 	}
 	return s, nil
@@ -146,6 +162,18 @@ func (s *Store) Accept(ctx context.Context, agent, asset string, b telemetry.Bat
 				return receipt, telemetry.ErrConflict
 			}
 			if previous.ID != r.ID || previous.Source != r.Source || previous.Cursor != r.Cursor || !equivalentSourceJSON(previous.Data, r.Data) {
+				return receipt, telemetry.ErrConflict
+			}
+			continue
+		}
+		if !errors.Is(e, sql.ErrNoRows) {
+			return receipt, e
+		}
+		var oldID, oldDigest string
+		e = tx.QueryRowContext(ctx, "SELECT id,digest FROM retired_events WHERE id=? OR (agent_id=? AND source=? AND cursor=?)", id, agent, r.Source, r.Cursor).Scan(&oldID, &oldDigest)
+		if e == nil {
+			digest, err := sourceDigest(r)
+			if err != nil || oldID != id || digest != oldDigest {
 				return receipt, telemetry.ErrConflict
 			}
 			continue
@@ -375,6 +403,24 @@ func correlate(ctx context.Context, tx *sql.Tx, n telemetry.Normalized) error {
 	return e
 }
 func (s *Store) Run(ctx context.Context, onError func(error)) {
+	maintenanceDone := make(chan struct{})
+	go func() {
+		defer close(maintenanceDone)
+		for {
+			if _, e := s.Maintain(ctx, time.Now().UTC()); e != nil && ctx.Err() == nil {
+				onError(e)
+			}
+			t := time.NewTimer(time.Minute)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	defer func() { <-maintenanceDone }()
+
 	for {
 		if e := s.Step(ctx); e != nil && ctx.Err() == nil {
 			onError(e)
@@ -413,4 +459,18 @@ func (s *Store) EventQueueUsage(ctx context.Context, agent string) (int64, int64
 	var count, size int64
 	e := s.db.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(length(CAST(payload AS BLOB))),0) FROM event_spool WHERE agent_id=?", agent).Scan(&count, &size)
 	return count, size, e
+}
+
+func sourceDigest(r telemetry.Raw) (string, error) {
+	var v any
+	d := json.NewDecoder(bytes.NewReader(r.Data))
+	d.UseNumber()
+	if e := d.Decode(&v); e != nil {
+		return "", e
+	}
+	b, e := json.Marshal(v)
+	if e != nil {
+		return "", e
+	}
+	return telemetry.ID(r.ID, r.Source, r.Cursor, string(b)), nil
 }

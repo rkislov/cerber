@@ -36,6 +36,8 @@ jobs:
         run: node --check internal/admin/static/groups.js
       - name: Check event console JavaScript
         run: node --check internal/admin/static/events.js
+      - name: Check event lifecycle JavaScript
+        run: node --check internal/admin/static/lifecycle.js
       - name: Check incident workspace JavaScript
         run: node --check internal/admin/static/incidents.js
       - name: Check managed update JavaScript and Python syntax

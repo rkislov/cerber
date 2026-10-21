@@ -49,7 +49,7 @@ const usage = `Cerber — прототип сканера на Go
   siem acknowledge -id ALERT_ID
   siem evaluate-alerts [-offline-after 15m] [-inventory-max-age 24h]
   siem agents [-asset ID] [-offline-after 15m] [-inventory-max-age 24h] [-limit 100] [-after ID]
-  siem serve [-listen 127.0.0.1:8790] [-tls-cert FILE -tls-key FILE] [-admin] [-admin-key FILE] [-events-db FILE] [-directory-config FILE] [-oidc-config FILE] [-patch-key FILE]
+  siem serve [-listen 127.0.0.1:8790] [-tls-cert FILE -tls-key FILE] [-admin] [-admin-key FILE] [-events-db FILE] [-event-archive-dir ABSOLUTE_DIR] [-directory-config FILE] [-oidc-config FILE] [-patch-key FILE]
   patch keygen -out FILE
   patch executor -config ABSOLUTE_FILE
   siem enroll -asset SERVER_ASSET_ID -out CREDENTIALS_FILE

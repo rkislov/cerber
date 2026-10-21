@@ -7,14 +7,72 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/rkislov/cerber/internal/telemetry"
+	"net/netip"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 func (s *Store) ReadEvents(ctx context.Context, q telemetry.Query) ([]telemetry.Normalized, error) {
 	if q.Before < 0 || q.Limit < 1 || q.Limit > 101 || q.AgentID != "" && !telemetry.AgentIdentifier(q.AgentID) || q.Class != "" && q.Class != "authentication" && q.Class != "audit" && q.Class != "system" && q.Class != "unknown" || q.Status != "" && q.Status != "parsed" && q.Status != "quarantine" {
 		return nil, telemetry.ErrInvalid
 	}
-	rows, e := s.db.QueryContext(ctx, "SELECT payload FROM normalized_events WHERE (?=0 OR sequence<?) AND (?='' OR agent_id=?) AND (?='' OR class=?) AND (?='' OR status=?) ORDER BY sequence DESC LIMIT ?", q.Before, q.Before, q.AgentID, q.AgentID, q.Class, q.Class, q.Status, q.Status, q.Limit)
+	if q.TimeField != "" && q.TimeField != "event" && q.TimeField != "received" {
+		return nil, telemetry.ErrInvalid
+	}
+	if !queryText(q.Text, 1024) || !queryText(q.User, 2048) || !queryText(q.Code, 64) || q.Source != "" && !telemetry.ValidSource(q.Source) || q.Outcome != "" && q.Outcome != "success" && q.Outcome != "failure" && q.Outcome != "unknown" {
+		return nil, telemetry.ErrInvalid
+	}
+	if q.SourceIP != "" {
+		ip, e := netip.ParseAddr(q.SourceIP)
+		if e != nil {
+			return nil, telemetry.ErrInvalid
+		}
+		q.SourceIP = ip.Unmap().String()
+	}
+	q.User = strings.ToLower(q.User)
+	if q.From != nil && q.Until != nil && !q.From.Before(*q.Until) {
+		return nil, telemetry.ErrInvalid
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	sqlQuery := "SELECT n.payload FROM normalized_events n"
+	timeColumn := "n.event_time"
+	if q.TimeField == "received" {
+		sqlQuery += " JOIN raw_events r ON r.sequence=n.sequence"
+		timeColumn = "r.received_at"
+	}
+	conditions := []string{}
+	args := []any{}
+	if q.Before > 0 {
+		conditions = append(conditions, "n.sequence<?")
+		args = append(args, q.Before)
+	}
+	for _, field := range []struct{ column, value string }{{"n.agent_id", q.AgentID}, {"n.class", q.Class}, {"n.status", q.Status}, {"json_extract(n.payload,'$.source')", q.Source}, {"n.user_name", q.User}, {"n.source_ip", q.SourceIP}, {"json_extract(n.payload,'$.code')", q.Code}, {"n.outcome", q.Outcome}} {
+		if field.value != "" {
+			conditions = append(conditions, field.column+"=?")
+			args = append(args, field.value)
+		}
+	}
+	if q.From != nil {
+		conditions = append(conditions, timeColumn+">=?")
+		args = append(args, stamp(*q.From))
+	}
+	if q.Until != nil {
+		conditions = append(conditions, timeColumn+"<?")
+		args = append(args, stamp(*q.Until))
+	}
+	if strings.TrimSpace(q.Text) != "" {
+		conditions = append(conditions, "n.sequence IN (SELECT rowid FROM event_search WHERE event_search MATCH ?)")
+		args = append(args, `"`+strings.ReplaceAll(strings.TrimSpace(q.Text), `"`, `""`)+`"`)
+	}
+	if len(conditions) > 0 {
+		sqlQuery += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	sqlQuery += " ORDER BY n.sequence DESC LIMIT ?"
+	args = append(args, q.Limit)
+	rows, e := s.db.QueryContext(ctx, sqlQuery, args...)
 	if e != nil {
 		return nil, e
 	}
@@ -38,7 +96,7 @@ func (s *Store) ReadRaw(ctx context.Context, id string) (telemetry.RawRecord, er
 	var at, p string
 	e := s.db.QueryRowContext(ctx, "SELECT sequence,agent_id,asset_id,received_at,payload FROM raw_events WHERE id=?", id).Scan(&r.Sequence, &r.AgentID, &r.AssetID, &at, &p)
 	if errors.Is(e, sql.ErrNoRows) {
-		return r, telemetry.ErrNotFound
+		return s.readArchivedRaw(ctx, id)
 	}
 	if e != nil {
 		return r, e
@@ -110,4 +168,16 @@ func (s *Store) Status(ctx context.Context) (telemetry.PipelineStatus, error) {
 	var v telemetry.PipelineStatus
 	e := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM raw_events),(SELECT count(*) FROM normalized_events),(SELECT count(*) FROM normalized_events WHERE status='quarantine'),(SELECT count(*) FROM detections),(SELECT position FROM consumer_cursors WHERE name='normalizer/1'),(SELECT position FROM consumer_cursors WHERE name='correlator/1')`).Scan(&v.Raw, &v.Normalized, &v.Quarantined, &v.Detections, &v.ProcessorCursor, &v.CorrelatorCursor)
 	return v, e
+}
+
+func queryText(s string, max int) bool {
+	if len(s) > max || !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }

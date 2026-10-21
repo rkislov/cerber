@@ -57,6 +57,9 @@ func eventManagement(store EventStore, w http.ResponseWriter, r *http.Request, u
 		if errors.Is(e, telemetry.ErrInvalid) {
 			status = 400
 		}
+		if errors.Is(e, telemetry.ErrExpired) {
+			status = 410
+		}
 		if errors.Is(e, telemetry.ErrNotFound) {
 			status = 404
 		}
@@ -83,7 +86,7 @@ func eventManagement(store EventStore, w http.ResponseWriter, r *http.Request, u
 			fail(e)
 			return true
 		}
-		writeJSON(w, map[string]any{"id": id, "agent_id": raw.AgentID, "asset_id": raw.AssetID, "source": raw.Raw.Source, "received_at": raw.ReceivedAt, "data": raw.Raw.Data})
+		writeJSON(w, map[string]any{"id": id, "agent_id": raw.AgentID, "asset_id": raw.AssetID, "source": raw.Raw.Source, "received_at": raw.ReceivedAt, "data": raw.Raw.Data, "archived": raw.Archived, "archive_id": raw.ArchiveID})
 		return true
 	case "/admin/api/security-events":
 		if r.Method != "GET" {
@@ -91,6 +94,23 @@ func eventManagement(store EventStore, w http.ResponseWriter, r *http.Request, u
 			return true
 		}
 		q := telemetry.Query{Before: int64(before), AgentID: r.URL.Query().Get("agent"), Class: r.URL.Query().Get("class"), Status: r.URL.Query().Get("status"), Limit: 101}
+		q.TimeField = r.URL.Query().Get("time_field")
+		q.Text = r.URL.Query().Get("q")
+		q.Source = r.URL.Query().Get("source")
+		q.User = r.URL.Query().Get("user")
+		q.SourceIP = r.URL.Query().Get("ip")
+		q.Code = r.URL.Query().Get("code")
+		q.Outcome = r.URL.Query().Get("outcome")
+		for key, target := range map[string]**time.Time{"from": &q.From, "until": &q.Until} {
+			if value := r.URL.Query().Get(key); value != "" {
+				at, err := time.Parse(time.RFC3339Nano, value)
+				if err != nil {
+					fail(telemetry.ErrInvalid)
+					return true
+				}
+				*target = &at
+			}
+		}
 		items, e := store.ReadEvents(r.Context(), q)
 		if e != nil {
 			fail(e)
