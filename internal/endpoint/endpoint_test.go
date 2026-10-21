@@ -95,7 +95,7 @@ func TestProtectedIPAndConfirmation(t *testing.T) {
 	}
 	for _, ip := range []string{"203.0.113.1", "127.0.0.1", "10.1.2.3", "85.137.24.140"} {
 		c := Command{Action: "block", Agent: "agent", IP: ip, Minutes: 30, Confirm: true, Reason: "controlled test"}
-		if e := s.Command(ctx, c, "roman", []string{"85.137.24.140"}); e == nil {
+		if e := s.Command(ctx, c, "roman", []string{"85.137.24.140", "10.1.2.3"}); e == nil {
 			t.Fatal("protected accepted", ip)
 		}
 	}
