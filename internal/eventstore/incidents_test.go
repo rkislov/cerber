@@ -106,11 +106,11 @@ func TestIncidentAuditFailureRollsBackAndMigratesV1(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.db.ExecContext(ctx, `DROP TABLE incident_history;DROP TABLE incident_detections;DROP TABLE incidents;PRAGMA user_version=1;`); e != nil {
-		t.Fatal(e)
-	}
 	a := telemetry.ID("a")
 	if _, e = s.Accept(ctx, a, "asset", batch(t, a, 0, "audit")); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.db.ExecContext(ctx, `DROP TRIGGER event_search_insert;DROP TRIGGER event_search_delete;DROP TABLE event_search;DROP TABLE retired_events;DROP TABLE event_archives;DROP TABLE event_retention_audit;DROP TABLE event_retention;DROP INDEX normalized_filter_time;DROP INDEX normalized_filter_agent_time;DROP INDEX raw_received_time;DROP INDEX normalized_filter_user;DROP INDEX normalized_filter_ip;DROP INDEX normalized_filter_source;DROP TABLE incident_history;DROP TABLE incident_detections;DROP TABLE incidents;PRAGMA user_version=1;`); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()
@@ -121,7 +121,7 @@ func TestIncidentAuditFailureRollsBackAndMigratesV1(t *testing.T) {
 	defer s.Close()
 	var version int
 	s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version)
-	if version != 2 {
+	if version != 3 {
 		t.Fatal(version)
 	}
 	status, _ := s.Status(ctx)

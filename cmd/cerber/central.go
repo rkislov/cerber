@@ -127,6 +127,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		return adminUserAdd(ctx, store, args[2:], out, errOut)
 	case "siem serve":
 		patchKey := f.String("patch-key", "", "Ed25519 private signing key for managed updates (opt-in)")
+		eventArchiveDir := f.String("event-archive-dir", "", "absolute private directory for event archives; opt-in retention")
 		eventsDB := f.String("events-db", "", "separate security event journal database; disabled if omitted")
 		oidcConfig := f.String("oidc-config", "", "optional OpenID Connect configuration JSON")
 		directoryConfig := f.String("directory-config", "", "optional LDAPS configuration JSON")
@@ -159,6 +160,9 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			}
 			mux.Handle("/v1/agent/patches/", ingest.NewPatchHandler(store, k))
 		}
+		if *eventArchiveDir != "" && *eventsDB == "" {
+			return fmt.Errorf("event archive directory requires -events-db")
+		}
 		var eventDB *eventstore.Store
 		var eventReader admin.EventStore
 		if *eventsDB != "" {
@@ -171,6 +175,11 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 				return err
 			}
 			defer eventDB.Close()
+			if *eventArchiveDir != "" {
+				if err = eventDB.ConfigureArchive(*eventArchiveDir); err != nil {
+					return err
+				}
+			}
 			eventReader = eventDB
 			mux.Handle("/v1/agent/events", ingest.NewEventHandler(store, eventDB))
 		}

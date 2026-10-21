@@ -19,6 +19,7 @@ const MaxRecords = 100
 var ErrInvalid = errors.New("invalid security event batch")
 var ErrConflict = errors.New("immutable security event conflict")
 var ErrFull = errors.New("event spool full; source cursor retained")
+var ErrExpired = errors.New("event archive expired")
 var ErrNotFound = errors.New("event not found")
 
 type Raw struct {
@@ -104,6 +105,8 @@ type Normalized struct {
 	Message    string    `json:"message"`
 }
 type RawRecord struct {
+	Archived         bool
+	ArchiveID        string
 	Sequence         int64
 	AgentID, AssetID string
 	ReceivedAt       time.Time
@@ -128,9 +131,11 @@ type Detection struct {
 	AcknowledgedBy string    `json:"acknowledged_by,omitempty"`
 }
 type Query struct {
-	Before                 int64
-	AgentID, Class, Status string
-	Limit                  int
+	Text, Source, User, SourceIP, Code, Outcome, TimeField string
+	From, Until                                            *time.Time
+	Before                                                 int64
+	AgentID, Class, Status                                 string
+	Limit                                                  int
 }
 type PipelineStatus struct {
 	Raw              int64 `json:"raw"`
