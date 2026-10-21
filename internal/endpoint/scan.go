@@ -95,7 +95,7 @@ func scanWithRoots(ctx context.Context, p Policy, iocs []integrations.IOC, curso
 				return nil
 			}
 			a, b := sha256.New(), md5.New()
-			n, e := io.Copy(io.MultiWriter(a, b), io.LimitReader(f, 128<<20+1))
+			n, e := io.Copy(io.MultiWriter(a, b), io.LimitReader(contextReader{ctx: ctx, r: f}, 128<<20+1))
 			end, statErr := f.Stat()
 			f.Close()
 			bytesRead += n
@@ -125,4 +125,16 @@ func scanWithRoots(ctx context.Context, p Policy, iocs []integrations.IOC, curso
 		r.State = "no_hash_indicators"
 	}
 	return r
+}
+
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c contextReader) Read(b []byte) (int, error) {
+	if e := c.ctx.Err(); e != nil {
+		return 0, e
+	}
+	return c.r.Read(b)
 }
