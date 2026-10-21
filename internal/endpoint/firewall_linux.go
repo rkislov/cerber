@@ -37,7 +37,7 @@ func firewall(ctx context.Context, b Block, add bool) error {
 		return nil
 	}
 	ip, e := netip.ParseAddr(b.IP)
-	if e != nil || !ip.IsGlobalUnicast() || ip.IsPrivate() {
+	if e != nil || !ip.IsGlobalUnicast() {
 		return ErrInvalid
 	}
 	remaining := int(time.Until(b.Expires).Seconds())
