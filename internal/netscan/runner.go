@@ -12,14 +12,14 @@ import (
 )
 
 const Ports = "21,22,25,53,80,110,135,139,143,389,443,445,465,587,636,993,995,1433,1521,22222,3306,3389,5432,5900,6379,8080,8443,9200"
-const Scripts = "smb-vuln-ms17-010,ssl-heartbleed"
+const Scripts = "smb-vuln-ms17-010,ssl-heartbleed,ssl-poodle,ssl-ccs-injection,http-vuln-cve2015-1635"
 
 // Args accepts no shell fragments, script names, filenames or arbitrary switches.
 func Args(t Task) ([]string, error) {
 	if e := t.Validate(); e != nil {
 		return nil, e
 	}
-	args := []string{"-n", "--max-retries", "1", "--max-rate", "50", "--max-parallelism", "16", "--host-timeout", "45s", "-oX", "-"}
+	args := []string{"-n", "--max-retries", "1", "--max-rate", "50", "--max-parallelism", "16", "--host-timeout", "90s", "-oX", "-"}
 	if t.Profile == "discovery" {
 		args = append(args, "-sn")
 	} else {
@@ -132,7 +132,7 @@ type xmlTable struct {
 
 func vulnerable(t xmlTable) bool {
 	for _, e := range t.Elems {
-		if e.Key == "state" && e.Value == "VULNERABLE" {
+		if e.Key == "state" && (e.Value == "VULNERABLE" || e.Value == "VULNERABLE (Exploitable)") {
 			return true
 		}
 	}
@@ -180,13 +180,16 @@ func Parse(data []byte, t Task) ([]Host, error) {
 		}
 		scripts := v.Scripts
 		for _, p := range v.Ports {
+			for i := range p.Scripts {
+				p.Scripts[i].Output = fmt.Sprintf("Порт %d/%s · %s", p.Port, p.Protocol, p.Scripts[i].Output)
+			}
 			scripts = append(scripts, p.Scripts...)
 			if p.State.State == "open" {
 				h.Services = append(h.Services, Service{p.Port, p.Protocol, p.Service.Name, p.Service.Product, p.Service.Version, p.Service.CPE})
 			}
 		}
 		for _, s := range scripts {
-			if s.ID != "smb-vuln-ms17-010" && s.ID != "ssl-heartbleed" {
+			if _, allowed := Checks[s.ID]; !allowed {
 				continue
 			}
 			status := "not_confirmed"

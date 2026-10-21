@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/rkislov/cerber/internal/integrations"
 	"github.com/rkislov/cerber/internal/telemetry"
+	"github.com/rkislov/cerber/internal/vuln"
 	_ "modernc.org/sqlite"
 	"net/netip"
 	"os"
@@ -26,11 +27,12 @@ type EventSink interface {
 	Accept(context.Context, string, string, telemetry.Batch) (telemetry.Receipt, error)
 }
 type Server struct {
-	db     *sql.DB
-	key    ed25519.PrivateKey
-	feed   Feed
-	events EventSink
-	mu     sync.Mutex
+	Catalog *vuln.Catalog
+	db      *sql.DB
+	key     ed25519.PrivateKey
+	feed    Feed
+	events  EventSink
+	mu      sync.Mutex
 }
 type Command struct {
 	Action  string `json:"action"`
@@ -59,9 +61,19 @@ func Open(path string, key ed25519.PrivateKey, feed Feed, events EventSink) (*Se
 		db.Close()
 		return nil, e
 	}
-	return &Server{db: db, key: key, feed: feed, events: events}, nil
+	catalog, e := vuln.Open(path + ".vuln.db")
+	if e != nil {
+		db.Close()
+		return nil, e
+	}
+	return &Server{Catalog: catalog, db: db, key: key, feed: feed, events: events}, nil
 }
-func (s *Server) Close() error { return s.db.Close() }
+func (s *Server) Close() error {
+	if s.Catalog != nil {
+		s.Catalog.Close()
+	}
+	return s.db.Close()
+}
 func defaultPolicy() Policy {
 	return Policy{ID: "default", Name: "Без политики", Class: "server", Version: 1, Mode: "off", ScanIntervalMinutes: 1440, ScanHourUTC: 0, SyncMinutes: 60, Exclude: []string{}, Protected: []string{}, Agents: []string{}}
 }

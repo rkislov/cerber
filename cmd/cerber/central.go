@@ -268,6 +268,9 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 				return err
 			}
 			probes := []health.Probe{store.Health}
+			if responseServer != nil && responseServer.Catalog != nil {
+				probes = append(probes, responseServer.Catalog.Health)
+			}
 			if integrationWorker != nil {
 				probes = append(probes, integrationWorker.Health)
 			}
@@ -316,6 +319,13 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 				}
 			}
 		}()
+		networkDone := make(chan struct{})
+		go func() {
+			defer close(networkDone)
+			if responseServer != nil {
+				responseServer.RunNetworkCatalog(monitorCtx)
+			}
+		}()
 		integrationDone := make(chan struct{})
 		go func() {
 			defer close(integrationDone)
@@ -330,7 +340,14 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 				eventDB.Run(monitorCtx, func(err error) { fmt.Fprintf(errOut, "event pipeline: %v\n", err) })
 			}
 		}()
-		defer func() { stop(); <-done; <-eventDone; <-integrationDone; <-responseDone }()
+		defer func() {
+			stop()
+			<-done
+			<-eventDone
+			<-integrationDone
+			<-responseDone
+			<-networkDone
+		}()
 		return serveHTTP(ctx, mux, *listen, *cert, *key, "SIEM receiver", 2*time.Minute, 2*time.Minute, errOut)
 	case "siem enroll":
 		asset := f.String("asset", "", "server asset ID")

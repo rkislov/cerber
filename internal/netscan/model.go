@@ -4,6 +4,7 @@ package netscan
 
 import (
 	"fmt"
+	"github.com/rkislov/cerber/internal/vuln"
 	"net/netip"
 	"time"
 )
@@ -122,10 +123,11 @@ type Finding struct {
 	Evidence string `json:"evidence"`
 }
 type Host struct {
-	IP       string    `json:"ip"`
-	Name     string    `json:"name"`
-	Services []Service `json:"services"`
-	Findings []Finding `json:"findings"`
+	Vulnerabilities []vuln.Match `json:"vulnerabilities,omitempty"`
+	IP              string       `json:"ip"`
+	Name            string       `json:"name"`
+	Services        []Service    `json:"services"`
+	Findings        []Finding    `json:"findings"`
 }
 type Result struct {
 	ID       string    `json:"id"`
