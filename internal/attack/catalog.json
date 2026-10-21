@@ -1,0 +1,195 @@
+{
+  "source": "https://github.com/mitre-attack/attack-stix-data",
+  "retrieved": "2026-10-21",
+  "source_sha256": "81113ba98afa2928f3dcff62022539f7ce30c315c32e14422f11ff95ce534352",
+  "techniques": [
+    {
+      "id": "T1046",
+      "name": "Network Service Discovery",
+      "url": "https://attack.mitre.org/techniques/T1046",
+      "version": "3.2",
+      "modified": "2026-05-12T15:12:00.723Z",
+      "tactics": [
+        {
+          "id": "TA0007",
+          "name": "Discovery",
+          "url": "https://attack.mitre.org/tactics/TA0007"
+        }
+      ]
+    },
+    {
+      "id": "T1068",
+      "name": "Exploitation for Privilege Escalation",
+      "url": "https://attack.mitre.org/techniques/T1068",
+      "version": "1.6",
+      "modified": "2025-10-24T17:49:14.643Z",
+      "tactics": [
+        {
+          "id": "TA0004",
+          "name": "Privilege Escalation",
+          "url": "https://attack.mitre.org/tactics/TA0004"
+        }
+      ]
+    },
+    {
+      "id": "T1078",
+      "name": "Valid Accounts",
+      "url": "https://attack.mitre.org/techniques/T1078",
+      "version": "3.0",
+      "modified": "2026-05-12T15:12:00.707Z",
+      "tactics": [
+        {
+          "id": "TA0005",
+          "name": "Stealth",
+          "url": "https://attack.mitre.org/tactics/TA0005"
+        },
+        {
+          "id": "TA0003",
+          "name": "Persistence",
+          "url": "https://attack.mitre.org/tactics/TA0003"
+        },
+        {
+          "id": "TA0004",
+          "name": "Privilege Escalation",
+          "url": "https://attack.mitre.org/tactics/TA0004"
+        },
+        {
+          "id": "TA0001",
+          "name": "Initial Access",
+          "url": "https://attack.mitre.org/tactics/TA0001"
+        }
+      ]
+    },
+    {
+      "id": "T1110.001",
+      "name": "Password Guessing",
+      "url": "https://attack.mitre.org/techniques/T1110/001",
+      "version": "1.7",
+      "modified": "2026-05-12T15:12:00.620Z",
+      "tactics": [
+        {
+          "id": "TA0006",
+          "name": "Credential Access",
+          "url": "https://attack.mitre.org/tactics/TA0006"
+        }
+      ]
+    },
+    {
+      "id": "T1190",
+      "name": "Exploit Public-Facing Application",
+      "url": "https://attack.mitre.org/techniques/T1190",
+      "version": "2.8",
+      "modified": "2026-05-12T15:12:00.628Z",
+      "tactics": [
+        {
+          "id": "TA0001",
+          "name": "Initial Access",
+          "url": "https://attack.mitre.org/tactics/TA0001"
+        }
+      ]
+    },
+    {
+      "id": "T1203",
+      "name": "Exploitation for Client Execution",
+      "url": "https://attack.mitre.org/techniques/T1203",
+      "version": "1.5",
+      "modified": "2025-10-24T17:49:18.695Z",
+      "tactics": [
+        {
+          "id": "TA0002",
+          "name": "Execution",
+          "url": "https://attack.mitre.org/tactics/TA0002"
+        }
+      ]
+    },
+    {
+      "id": "T1210",
+      "name": "Exploitation of Remote Services",
+      "url": "https://attack.mitre.org/techniques/T1210",
+      "version": "1.2",
+      "modified": "2026-08-04T20:30:55.427Z",
+      "tactics": [
+        {
+          "id": "TA0008",
+          "name": "Lateral Movement",
+          "url": "https://attack.mitre.org/tactics/TA0008"
+        }
+      ]
+    },
+    {
+      "id": "T1212",
+      "name": "Exploitation for Credential Access",
+      "url": "https://attack.mitre.org/techniques/T1212",
+      "version": "1.6",
+      "modified": "2025-10-24T17:49:08.674Z",
+      "tactics": [
+        {
+          "id": "TA0006",
+          "name": "Credential Access",
+          "url": "https://attack.mitre.org/tactics/TA0006"
+        }
+      ]
+    },
+    {
+      "id": "T1499",
+      "name": "Endpoint Denial of Service",
+      "url": "https://attack.mitre.org/techniques/T1499",
+      "version": "1.2",
+      "modified": "2025-10-24T17:49:22.088Z",
+      "tactics": [
+        {
+          "id": "TA0040",
+          "name": "Impact",
+          "url": "https://attack.mitre.org/tactics/TA0040"
+        }
+      ]
+    },
+    {
+      "id": "T1557",
+      "name": "Adversary-in-the-Middle",
+      "url": "https://attack.mitre.org/techniques/T1557",
+      "version": "2.5",
+      "modified": "2026-05-12T15:12:00.620Z",
+      "tactics": [
+        {
+          "id": "TA0006",
+          "name": "Credential Access",
+          "url": "https://attack.mitre.org/tactics/TA0006"
+        },
+        {
+          "id": "TA0009",
+          "name": "Collection",
+          "url": "https://attack.mitre.org/tactics/TA0009"
+        }
+      ]
+    },
+    {
+      "id": "T1595",
+      "name": "Active Scanning",
+      "url": "https://attack.mitre.org/techniques/T1595",
+      "version": "1.0",
+      "modified": "2025-10-24T17:48:53.018Z",
+      "tactics": [
+        {
+          "id": "TA0043",
+          "name": "Reconnaissance",
+          "url": "https://attack.mitre.org/tactics/TA0043"
+        }
+      ]
+    },
+    {
+      "id": "T1685.005",
+      "name": "Clear Windows Event Logs",
+      "url": "https://attack.mitre.org/techniques/T1685/005",
+      "version": "1.0",
+      "modified": "2026-05-12T15:12:00.642Z",
+      "tactics": [
+        {
+          "id": "TA0112",
+          "name": "Defense Impairment",
+          "url": "https://attack.mitre.org/tactics/TA0112"
+        }
+      ]
+    }
+  ]
+}

@@ -4,6 +4,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"github.com/rkislov/cerber/internal/attack"
 	"github.com/rkislov/cerber/internal/correlation"
 	"github.com/rkislov/cerber/internal/incidents"
 	"github.com/rkislov/cerber/internal/telemetry"
@@ -22,6 +23,14 @@ type EventStore interface {
 }
 
 func eventManagement(store EventStore, w http.ResponseWriter, r *http.Request, user User) bool {
+	if r.URL.Path == "/admin/api/mitre" {
+		if r.Method != "GET" {
+			http.Error(w, "method not allowed", 405)
+		} else {
+			writeJSON(w, attack.Catalog())
+		}
+		return true
+	}
 	if r.URL.Path == "/admin/api/correlation-rules" {
 		if r.Method != "GET" {
 			http.Error(w, "method not allowed", 405)

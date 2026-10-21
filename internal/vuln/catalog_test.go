@@ -116,3 +116,19 @@ func TestNVDApplicabilityKeepsEnvironmentUncertainAndRejectsFixedVersion(t *test
 		t.Fatal("fixed version candidate")
 	}
 }
+
+func TestCWEExtractionFromBDUAndNVD(t *testing.T) {
+	c := fixture(t)
+	xml := strings.Replace(xmlFixture, "<name>OpenSSH test</name>", "<name>OpenSSH test</name><cwes><cwe><identifier>CWE-362</identifier></cwe></cwes>", 1)
+	if e := c.ImportBDU(context.Background(), strings.NewReader(xml)); e != nil {
+		t.Fatal(e)
+	}
+	m := c.Lookup(context.Background(), "cpe:/a:openbsd:openssh:9.6p1")
+	if len(m) != 1 || len(m[0].CWEs) != 1 || m[0].CWEs[0] != "CWE-362" {
+		t.Fatal(m)
+	}
+	records, _, e := parseNVD([]byte(`{"totalResults":1,"vulnerabilities":[{"cve":{"id":"CVE-2026-12345","weaknesses":[{"description":[{"value":"CWE-79"},{"value":"NVD-CWE-noinfo"}]}]}}]}`), CPE("cpe:/a:openbsd:openssh:9.6p1"))
+	if e != nil || len(records) != 1 || len(records[0].CWEs) != 1 || records[0].CWEs[0] != "CWE-79" {
+		t.Fatal(records, e)
+	}
+}

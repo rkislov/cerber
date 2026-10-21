@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/rkislov/cerber/internal/attack"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"net/netip"
 	"strings"
@@ -87,6 +88,7 @@ func (s *Store) ReadEvents(ctx context.Context, q telemetry.Query) ([]telemetry.
 		if e = json.Unmarshal([]byte(p), &n); e != nil {
 			return nil, e
 		}
+		n.Attack = attack.Event(n.Class, n.Action, n.Outcome, n.Status)
 		out = append(out, n)
 	}
 	return out, rows.Err()
@@ -131,6 +133,7 @@ func (s *Store) ReadDetections(ctx context.Context, before int64, limit int) ([]
 		d.Sequence = seq
 		d.State = state
 		d.AcknowledgedBy = by
+		d.Attack = attack.RuleVersion(d.Rule, d.Version)
 		out = append(out, d)
 	}
 	return out, rows.Err()
