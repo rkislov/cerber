@@ -19,16 +19,18 @@ import (
 )
 
 type Record struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Score       float64  `json:"score"`
-	Vector      string   `json:"vector"`
-	Severity    string   `json:"severity"`
-	Source      string   `json:"source"`
-	URL         string   `json:"url"`
-	CVEs        []string `json:"cves"`
-	CPEs        []string `json:"cpes"`
+	ContextRequired bool     `json:"context_required,omitempty"`
+	Applicability   string   `json:"applicability,omitempty"`
+	ID              string   `json:"id"`
+	Title           string   `json:"title"`
+	Description     string   `json:"description"`
+	Score           float64  `json:"score"`
+	Vector          string   `json:"vector"`
+	Severity        string   `json:"severity"`
+	Source          string   `json:"source"`
+	URL             string   `json:"url"`
+	CVEs            []string `json:"cves"`
+	CPEs            []string `json:"cpes"`
 }
 type Match struct {
 	Record
@@ -40,6 +42,7 @@ type Match struct {
 	Stale    bool      `json:"stale"`
 }
 type Cache struct {
+	Format  int       `json:"format"`
 	At      time.Time `json:"at"`
 	Attempt time.Time `json:"attempt"`
 	Error   string    `json:"error"`
@@ -174,6 +177,10 @@ func (c *Catalog) Lookup(ctx context.Context, raw string) []Match {
 		}
 		seen[r.ID] = true
 		m := Match{Record: r, Status: "version_candidate", Evidence: "NVD: CPE и версия из сетевого баннера; условия окружения и исправления дистрибутива требуют проверки", CPE: key, Fetched: v.At, Stale: time.Since(v.At) > 24*time.Hour}
+		if r.ContextRequired {
+			m.Status = "context_required"
+			m.Evidence += "; дополнительные условия применимости не проверены"
+		}
 		m.BDU = c.BDU(ctx, r.ID)
 		out = append(out, m)
 	}
@@ -263,7 +270,7 @@ func (c *Catalog) Sync(ctx context.Context, cpes []string) {
 		}
 		seen[key] = true
 		old := c.cache(ctx, key)
-		if !force && (time.Since(old.At) < 24*time.Hour || time.Since(old.Attempt) < 15*time.Minute) {
+		if !force && (old.Format == 1 && time.Since(old.At) < 24*time.Hour || time.Since(old.Attempt) < 15*time.Minute) {
 			continue
 		}
 		if n >= 100 {
@@ -278,6 +285,7 @@ func (c *Catalog) Sync(ctx context.Context, cpes []string) {
 			old.At = time.Now().UTC()
 			old.Error = ""
 			old.Records = records
+			old.Format = 1
 		}
 		b, _ := json.Marshal(old)
 		if _, err := c.db.ExecContext(ctx, "INSERT INTO products VALUES(?,?) ON CONFLICT(cpe) DO UPDATE SET payload=excluded.payload", key, string(b)); err != nil {

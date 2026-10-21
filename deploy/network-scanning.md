@@ -109,3 +109,10 @@ When Nmap supplies an unversioned application CPE and a separate concrete servic
 version, the version can complete that identity. Name-only fallback identities
 are restricted to reviewed OpenSSH and Apache HTTP Server aliases. Ambiguous
 versions containing distribution prose are not normalized into upstream versions.
+
+NVD applicability trees are retained in readable form: version bounds, additional
+AND/environment requirements, negation and constrained CPE attributes. An
+unsupported range, unconstrained product version or explicit client-only record
+is labelled **context_required**, rather than a verified server vulnerability.
+Known comparable fixed-version boundaries are excluded locally as well as through
+NVD filtering. Both candidate classes remain separate from NSE confirmation.
