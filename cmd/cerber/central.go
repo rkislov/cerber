@@ -17,7 +17,9 @@ import (
 	"github.com/rkislov/cerber/internal/domain"
 	"github.com/rkislov/cerber/internal/eventcollector"
 	"github.com/rkislov/cerber/internal/eventstore"
+	"github.com/rkislov/cerber/internal/health"
 	"github.com/rkislov/cerber/internal/ingest"
+	"github.com/rkislov/cerber/internal/integrations"
 	"github.com/rkislov/cerber/internal/inventory"
 	"github.com/rkislov/cerber/internal/jobs"
 	"github.com/rkislov/cerber/internal/patch"
@@ -126,6 +128,8 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 	case "siem user-add":
 		return adminUserAdd(ctx, store, args[2:], out, errOut)
 	case "siem serve":
+		settingsFile := f.String("settings-file", "", "absolute encrypted integration settings file")
+		settingsKey := f.String("settings-key", "", "private 32-byte integration settings key file")
 		patchKey := f.String("patch-key", "", "Ed25519 private signing key for managed updates (opt-in)")
 		eventArchiveDir := f.String("event-archive-dir", "", "absolute private directory for event archives; opt-in retention")
 		eventsDB := f.String("events-db", "", "separate security event journal database; disabled if omitted")
@@ -142,6 +146,17 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		checkEvery := f.Duration("monitor-interval", 30*time.Second, "alert evaluation interval (5s–1h)")
 		if err := parse(f, args[2:]); err != nil {
 			return err
+		}
+		var integrationStore *integrations.Store
+		if (*settingsFile == "") != (*settingsKey == "") {
+			return fmt.Errorf("both settings-file and settings-key are required")
+		}
+		if *settingsFile != "" {
+			var e error
+			integrationStore, e = integrations.Open(*settingsFile, *settingsKey)
+			if e != nil {
+				return e
+			}
 		}
 		policy := alerts.Policy{OfflineAfter: *offline, InventoryMaxAge: *maxAge}
 		if err := policy.Validate(); err != nil {
@@ -217,7 +232,11 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			if err != nil {
 				return err
 			}
-			handler, err := admin.NewHandler(store, token, admin.Options{PatchEnabled: *patchKey != "", SecureCookies: *cert != "" || *secureCookies, Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory, OIDC: identityProvider})
+			probes := []health.Probe{store.Health}
+			if eventDB != nil {
+				probes = append(probes, eventDB.Health)
+			}
+			handler, err := admin.NewHandler(store, token, admin.Options{System: health.New(filepath.Dir(store.Path()), probes...), Settings: integrationStore, PatchEnabled: *patchKey != "", SecureCookies: *cert != "" || *secureCookies, Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory, OIDC: identityProvider})
 			if err != nil {
 				return err
 			}
