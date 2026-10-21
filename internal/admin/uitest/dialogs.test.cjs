@@ -4,3 +4,13 @@ function setup(){const nodes=new Map();const $=id=>{if(!nodes.has(id))nodes.set(
 test('all 11 admin dialogs reopen and restore focus after their opener disappears',()=>{const {$,ctx,ids,document}=setup();assert.equal(ids.length,11);for(const id of ids){for(let i=0;i<3;i++){document.activeElement={isConnected:false};vm.runInContext(`openDialog(${JSON.stringify(id)})`,ctx);vm.runInContext(`openDialog(${JSON.stringify(id)})`,ctx);assert.equal($(id).scrollTop,0);$(id).close();assert.equal(document.querySelector(),undefined);assert.equal(document.activeElement,$('refresh'))}}});
 test('closing a child inspector keeps its parent modal active',()=>{const {$,ctx,document}=setup();vm.runInContext('openDialog("retention-dialog");openDialog("raw-dialog")',ctx);document.activeElement={isConnected:false};$('raw-dialog').close();assert.equal($('retention-dialog').open,true);assert.equal($('refresh').focused,undefined)});
 test('patch close event clears selected updates for Escape as well as the close button',()=>{const {$,ctx}=setup();vm.runInContext(read('patches.js'),ctx);for(const method of ['escape','button']){vm.runInContext('patchUI.agent={agent_id:"a"};patchUI.selected.set("pkg",{});patchUI.inventory="snapshot";patchUI.active=true;openDialog("patch-dialog")',ctx);if(method==='button')for(const f of $('patch-close').handlers.click)f();else $('patch-dialog').close();assert.equal(vm.runInContext('patchUI.agent',ctx),null);assert.equal(vm.runInContext('patchUI.selected.size',ctx),0);assert.equal(vm.runInContext('patchUI.inventory',ctx),'')}});
+test('agent actions remain visible after repeated opening with omitted optional flags',()=>{
+ const source=read('app.js');const start=source.indexOf('function openAgent(');const end=source.indexOf('\n',start);const {$,ctx}=setup();
+ for(const id of ['agent-patches','remote-actions','agent-jobs','revoke-agent']){
+  const hidden=new Set();$(id).classList={toggle(token,force){if(force===undefined){if(hidden.has(token))hidden.delete(token);else hidden.add(token)}else if(force)hidden.add(token);else hidden.delete(token)},contains:token=>hidden.has(token)};
+ }
+ Object.assign(ctx,{state:{},canManageAgents:()=>true,renderEventHealth(){},meta(){},date:String,labels:{},loadInventory(){}});
+ vm.runInContext(source.slice(start,end),ctx);
+ for(let i=0;i<4;i++){vm.runInContext('openAgent({agent_id:"a",asset_ip:"127.0.0.1"})',ctx);for(const id of ['agent-patches','remote-actions','agent-jobs','revoke-agent'])assert.equal($(id).classList.contains('hidden'),false,id);$('detail').close()}
+ vm.runInContext('openAgent({agent_id:"a",history:true})',ctx);for(const id of ['agent-patches','remote-actions','agent-jobs','revoke-agent'])assert.equal($(id).classList.contains('hidden'),true,id);
+});
