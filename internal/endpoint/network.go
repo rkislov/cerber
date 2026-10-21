@@ -316,7 +316,7 @@ func (s *Server) networkVulns(ctx context.Context, h netscan.Host) []vuln.Match 
 	out := []vuln.Match{}
 	seen := map[string]int{}
 	for _, svc := range h.Services {
-		for _, cpe := range svc.CPE {
+		for _, cpe := range svc.Identities() {
 			for _, m := range s.Catalog.Lookup(ctx, cpe) {
 				if _, ok := seen[m.ID]; ok {
 					continue
@@ -374,7 +374,7 @@ func (s *Server) RunNetworkCatalog(ctx context.Context) {
 			cpes := []string{}
 			for _, a := range v.Assets {
 				for _, svc := range a.Host.Services {
-					cpes = append(cpes, svc.CPE...)
+					cpes = append(cpes, svc.Identities()...)
 				}
 			}
 			s.Catalog.Sync(ctx, cpes)
