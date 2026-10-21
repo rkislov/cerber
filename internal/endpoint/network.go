@@ -5,16 +5,20 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"github.com/rkislov/cerber/internal/netscan"
 	"github.com/rkislov/cerber/internal/telemetry"
+	"github.com/rkislov/cerber/internal/vuln"
 	"reflect"
+	"sort"
 	"time"
 )
 
 type NetworkView struct {
-	Plans  []netscan.Plan  `json:"plans"`
-	Runs   []netscan.Run   `json:"runs"`
-	Assets []netscan.Asset `json:"assets"`
+	Catalog vuln.Status     `json:"catalog"`
+	Plans   []netscan.Plan  `json:"plans"`
+	Runs    []netscan.Run   `json:"runs"`
+	Assets  []netscan.Asset `json:"assets"`
 }
 type NetworkCommand struct {
 	Action string       `json:"action"`
@@ -49,8 +53,19 @@ func (s *Server) networkSave(ctx context.Context, v NetworkView) error {
 }
 func (s *Server) NetworkView(ctx context.Context) (NetworkView, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.networkLoad(ctx)
+	v, e := s.networkLoad(ctx)
+	s.mu.Unlock()
+	if e != nil {
+		return v, e
+	}
+	if s.Catalog != nil {
+		v.Catalog = s.Catalog.Status(ctx)
+		for i := range v.Assets {
+			h := &v.Assets[i].Host
+			h.Vulnerabilities = s.networkVulns(ctx, *h)
+		}
+	}
+	return v, nil
 }
 func (s *Server) NetworkCommand(ctx context.Context, c NetworkCommand, actor string) error {
 	s.mu.Lock()
@@ -64,6 +79,10 @@ func (s *Server) NetworkCommand(ctx context.Context, c NetworkCommand, actor str
 	}
 	now := time.Now().UTC()
 	switch c.Action {
+	case "sync":
+		if s.Catalog != nil {
+			s.Catalog.Request()
+		}
 	case "create":
 		if len(v.Plans) >= 100 || c.Plan.Validate() != nil || !telemetry.AgentIdentifier(c.Plan.Agent) {
 			return ErrInvalid
@@ -234,7 +253,7 @@ func validateNetworkResult(t netscan.Task, r netscan.Result) error {
 	}
 	seen := map[string]bool{}
 	for _, h := range r.Hosts {
-		if !allowed[h.IP] || seen[h.IP] || len(h.Name) > 253 || len(h.Services) > 28 || len(h.Findings) > 56 {
+		if !allowed[h.IP] || seen[h.IP] || len(h.Name) > 253 || len(h.Services) > 28 || len(h.Findings) > 140 {
 			return ErrInvalid
 		}
 		seen[h.IP] = true
@@ -249,7 +268,7 @@ func validateNetworkResult(t netscan.Task, r netscan.Result) error {
 			}
 		}
 		for _, f := range h.Findings {
-			if len(f.Evidence) > 4000 || (f.Script != "smb-vuln-ms17-010" && f.Script != "ssl-heartbleed") || (f.Status != "scanner_confirmed" && f.Status != "not_confirmed") {
+			if len(f.Evidence) > 4000 || !knownNetworkCheck(f.Script) || (f.Status != "scanner_confirmed" && f.Status != "not_confirmed") {
 				return ErrInvalid
 			}
 		}
@@ -288,6 +307,84 @@ func mergeAssets(v *NetworkView, r netscan.Run, now time.Time) {
 		if a.Plan == r.Task.Plan && targets[a.Host.IP] && !seen[a.Host.IP] {
 			a.State = "not_observed"
 			a.New = false
+		}
+	}
+}
+
+func knownNetworkCheck(id string) bool { _, ok := netscan.Checks[id]; return ok }
+func (s *Server) networkVulns(ctx context.Context, h netscan.Host) []vuln.Match {
+	out := []vuln.Match{}
+	seen := map[string]int{}
+	for _, svc := range h.Services {
+		for _, cpe := range svc.CPE {
+			for _, m := range s.Catalog.Lookup(ctx, cpe) {
+				if _, ok := seen[m.ID]; ok {
+					continue
+				}
+				m.Evidence = "Порт " + fmt.Sprint(svc.Port) + " · " + m.Evidence
+				seen[m.ID] = len(out)
+				out = append(out, m)
+			}
+		}
+	}
+	for _, f := range h.Findings {
+		if f.Status != "scanner_confirmed" {
+			continue
+		}
+		for _, id := range netscan.Checks[f.Script] {
+			if i, ok := seen[id]; ok {
+				out[i].Status = "scanner_confirmed"
+				out[i].Evidence = f.Script + ": " + f.Evidence
+				continue
+			}
+			for i := range out {
+				for _, cve := range out[i].CVEs {
+					if cve == id {
+						seen[id] = i
+					}
+				}
+			}
+			if i, ok := seen[id]; ok {
+				out[i].Status = "scanner_confirmed"
+				out[i].Evidence = f.Script + ": " + f.Evidence
+				continue
+			}
+			links := s.Catalog.BDU(ctx, id)
+			r := vuln.Record{ID: id, Title: id, Source: "Nmap NSE", URL: "https://nvd.nist.gov/vuln/detail/" + id, Severity: "unknown"}
+			for _, b := range links {
+				if b.Score > r.Score {
+					r.Score = b.Score
+					r.Vector = b.Vector
+					r.Severity = b.Severity
+				}
+			}
+			seen[id] = len(out)
+			out = append(out, vuln.Match{Record: r, Status: "scanner_confirmed", Evidence: f.Script + ": " + f.Evidence, BDU: links})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+	return out
+}
+func (s *Server) RunNetworkCatalog(ctx context.Context) {
+	for {
+		s.mu.Lock()
+		v, e := s.networkLoad(ctx)
+		s.mu.Unlock()
+		if e == nil {
+			cpes := []string{}
+			for _, a := range v.Assets {
+				for _, svc := range a.Host.Services {
+					cpes = append(cpes, svc.CPE...)
+				}
+			}
+			s.Catalog.Sync(ctx, cpes)
+		}
+		timer := time.NewTimer(time.Minute)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
 	}
 }

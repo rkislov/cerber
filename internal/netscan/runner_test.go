@@ -67,3 +67,11 @@ func TestXMLStructuredVulnerabilityAndNoFalseHost(t *testing.T) {
 		t.Fatal("hypothesis confirmed")
 	}
 }
+
+func TestExpandedSafeScriptStructuredResult(t *testing.T) {
+	xml := `<nmaprun><host><status state="up"/><address addr="192.0.2.1"/><ports><port portid="80" protocol="tcp"><state state="open"/><script id="http-vuln-cve2015-1635" output="fixture"><table><elem key="state">VULNERABLE (Exploitable)</elem></table></script></port></ports></host><runstats><finished exit="success"/></runstats></nmaprun>`
+	h, e := Parse([]byte(xml), task())
+	if e != nil || len(h) != 1 || len(h[0].Findings) != 1 || h[0].Findings[0].Status != "scanner_confirmed" {
+		t.Fatal(h, e)
+	}
+}

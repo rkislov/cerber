@@ -7,6 +7,7 @@ import (
 	"github.com/rkislov/cerber/internal/netscan"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -108,5 +109,24 @@ func TestNetworkRestartReportsInterruptionWithoutRepeating(t *testing.T) {
 	}
 	if _, e := os.Stat(path + ".network"); !os.IsNotExist(e) {
 		t.Fatal("ack did not clear result", e)
+	}
+}
+
+func TestNetworkCatalogCandidateRequiresProbeToConfirm(t *testing.T) {
+	s, _ := fixture(t)
+	ctx := context.Background()
+	xml := `<vulnerabilities><vul><identifier>BDU:2026-00001</identifier><name>Fixture only</name><vulnerable_software><soft><name>OpenSSH</name><version>до 9.8p1</version></soft></vulnerable_software><cvss3><vector score="9.1">CVSS:3.1</vector></cvss3><identifiers><identifier type="CVE">CVE-2014-0160</identifier></identifiers></vul></vulnerabilities>`
+	if e := s.Catalog.ImportBDU(ctx, strings.NewReader(xml)); e != nil {
+		t.Fatal(e)
+	}
+	h := netscan.Host{Services: []netscan.Service{{Port: 22, CPE: []string{"cpe:/a:openbsd:openssh:9.6p1"}}}}
+	m := s.networkVulns(ctx, h)
+	if len(m) != 1 || m[0].Status != "version_candidate" || m[0].Severity != "critical" {
+		t.Fatal(m)
+	}
+	h.Findings = []netscan.Finding{{Script: "ssl-heartbleed", Status: "scanner_confirmed", Evidence: "Fixture only"}}
+	m = s.networkVulns(ctx, h)
+	if len(m) != 1 || m[0].Status != "scanner_confirmed" {
+		t.Fatal(m)
 	}
 }
