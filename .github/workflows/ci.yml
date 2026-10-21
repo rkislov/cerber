@@ -41,7 +41,9 @@ jobs:
       - name: Check event console JavaScript
         run: node --check internal/admin/static/events.js
       - name: Regression checks for event inspector dialogs
-        run: node --test internal/admin/uitest/inspectors.test.cjs
+        run: |
+          node --check internal/admin/static/dialogs.js
+          node --test internal/admin/uitest/*.test.cjs
       - name: Check event lifecycle JavaScript
         run: node --check internal/admin/static/lifecycle.js
       - name: Check incident workspace JavaScript
