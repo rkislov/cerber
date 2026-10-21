@@ -19,8 +19,9 @@ func (s *Server) Handler(binding Receiver) http.Handler {
 			return
 		}
 		id := r.Header.Get("X-Cerber-Agent")
-		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if len(id) != 32 || len(token) < 32 {
+		authorization := r.Header.Get("Authorization")
+		token := strings.TrimPrefix(authorization, "Bearer ")
+		if token == authorization || len(id) != 32 || len(token) < 32 {
 			http.Error(w, "unauthorized", 401)
 			return
 		}
@@ -36,7 +37,7 @@ func (s *Server) Handler(binding Receiver) http.Handler {
 			http.Error(w, "endpoint busy", 429)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		defer r.Body.Close()
 		var report Report
 		d := json.NewDecoder(r.Body)

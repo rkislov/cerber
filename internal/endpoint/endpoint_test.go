@@ -2,14 +2,17 @@
 package endpoint
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"github.com/rkislov/cerber/internal/integrations"
 	"github.com/rkislov/cerber/internal/telemetry"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -207,5 +210,48 @@ func TestLocalCachedEventIOCMatchingIsPassiveAndExpires(t *testing.T) {
 	l.ObserveEvents([]telemetry.Raw{raw})
 	if l.matchCount.Load() != 1 {
 		t.Fatal("expired policy still matched")
+	}
+}
+
+type fakeBinding struct{}
+
+func (fakeBinding) AgentBinding(context.Context, string, string) (string, error) { return "asset", nil }
+
+type captureSink struct{ count int }
+
+func (s *captureSink) Accept(_ context.Context, _ string, _ string, b telemetry.Batch) (telemetry.Receipt, error) {
+	if e := b.Validate(); e != nil {
+		return telemetry.Receipt{}, e
+	}
+	s.count = len(b.Records)
+	return telemetry.Receipt{BatchID: b.ID}, nil
+}
+func TestEndpointReceivesBoundedLongPathFindingBatch(t *testing.T) {
+	s, _ := fixture(t)
+	sink := &captureSink{}
+	s.events = sink
+	r := Report{}
+	for i := 0; i < 100; i++ {
+		r.Findings = append(r.Findings, Finding{ID: telemetry.ID(fmt.Sprint(i)), Path: "/" + strings.Repeat("x", 4000), SHA256: strings.Repeat("a", 64), MD5: strings.Repeat("b", 32), At: time.Now().UTC()})
+	}
+	body, _ := json.Marshal(r)
+	if len(body) <= 256<<10 {
+		t.Fatal("fixture does not cover old request limit")
+	}
+	request := httptest.NewRequest("POST", "/v1/agent/endpoint", bytes.NewReader(body))
+	request.Header.Set("X-Cerber-Agent", strings.Repeat("a", 32))
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("q", 64))
+	w := httptest.NewRecorder()
+	s.Handler(fakeBinding{}).ServeHTTP(w, request)
+	if w.Code != 200 || sink.count != 100 {
+		t.Fatal(w.Code, w.Body.String(), sink.count)
+	}
+	request = httptest.NewRequest("POST", "/v1/agent/endpoint", strings.NewReader("{}"))
+	request.Header.Set("X-Cerber-Agent", strings.Repeat("a", 32))
+	request.Header.Set("Authorization", strings.Repeat("q", 64))
+	w = httptest.NewRecorder()
+	s.Handler(fakeBinding{}).ServeHTTP(w, request)
+	if w.Code != 401 {
+		t.Fatal("non-bearer credential accepted")
 	}
 }
