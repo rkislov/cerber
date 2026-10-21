@@ -95,12 +95,14 @@ func normalizeCEF(r RawRecord, n Normalized) Normalized {
 		return bad()
 	}
 	ip, e := netip.ParseAddr(ext["src"])
-	if e != nil {
+	if e != nil && !(v.Profile == "fess" && parts[5] == "Audit" && ext["src"] == "") {
 		return bad()
 	}
 	n.EventTime = at.UTC()
-	n.SourceIP = ip.Unmap().String()
-	n.Parser = "cef-network/1"
+	if ip.IsValid() {
+		n.SourceIP = ip.Unmap().String()
+	}
+	n.Parser = "cef-network/2"
 	n.Class = v.Profile
 	n.Product = parts[1] + "/" + parts[2]
 	n.Code = parts[4]

@@ -24,3 +24,12 @@ func TestCEFNormalization(t *testing.T) {
 		}
 	}
 }
+
+func TestFEssAuditHasActorWithoutSourceIP(t *testing.T) {
+	now := time.Now().UTC()
+	data, _ := json.Marshal(map[string]string{"profile": "fess", "line": "CEF:0|Fence|WAF|1|update|Audit|4|suser=admin cs1=policy rt=" + now.Format(time.RFC3339Nano)})
+	n := Normalize(RawRecord{ReceivedAt: now, Raw: Raw{Source: "network:cef", Data: data}})
+	if n.Status != "parsed" || n.Class != "audit" || n.User != "admin" || n.Action != "configuration_change" {
+		t.Fatal(n)
+	}
+}
