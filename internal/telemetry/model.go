@@ -83,26 +83,31 @@ func (b Batch) Validate() error {
 	return nil
 }
 func ValidSource(s string) bool {
-	return s == "journald" || s == "windows:Security" || s == "windows:System" || s == "windows:Application"
+	return s == "network:cef" || s == "journald" || s == "windows:Security" || s == "windows:System" || s == "windows:Application"
 }
 
 type Normalized struct {
-	Sequence   int64     `json:"sequence"`
-	ID         string    `json:"id"`
-	AgentID    string    `json:"agent_id"`
-	AssetID    string    `json:"asset_id"`
-	Source     string    `json:"source"`
-	EventTime  time.Time `json:"event_time"`
-	ReceivedAt time.Time `json:"received_at"`
-	Parser     string    `json:"parser"`
-	Status     string    `json:"status"`
-	Class      string    `json:"class"`
-	Action     string    `json:"action"`
-	Outcome    string    `json:"outcome"`
-	User       string    `json:"user,omitempty"`
-	SourceIP   string    `json:"source_ip,omitempty"`
-	Code       string    `json:"code,omitempty"`
-	Message    string    `json:"message"`
+	Product         string    `json:"product,omitempty"`
+	Device          string    `json:"device,omitempty"`
+	DestinationIP   string    `json:"destination_ip,omitempty"`
+	DestinationPort int       `json:"destination_port,omitempty"`
+	Request         string    `json:"request,omitempty"`
+	Sequence        int64     `json:"sequence"`
+	ID              string    `json:"id"`
+	AgentID         string    `json:"agent_id"`
+	AssetID         string    `json:"asset_id"`
+	Source          string    `json:"source"`
+	EventTime       time.Time `json:"event_time"`
+	ReceivedAt      time.Time `json:"received_at"`
+	Parser          string    `json:"parser"`
+	Status          string    `json:"status"`
+	Class           string    `json:"class"`
+	Action          string    `json:"action"`
+	Outcome         string    `json:"outcome"`
+	User            string    `json:"user,omitempty"`
+	SourceIP        string    `json:"source_ip,omitempty"`
+	Code            string    `json:"code,omitempty"`
+	Message         string    `json:"message"`
 }
 type RawRecord struct {
 	Archived         bool
@@ -113,6 +118,7 @@ type RawRecord struct {
 	Raw              Raw
 }
 type Detection struct {
+	GroupKey       string    `json:"group_key,omitempty"`
 	Sequence       int64     `json:"sequence"`
 	ID             string    `json:"id"`
 	Rule           string    `json:"rule"`

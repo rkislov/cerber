@@ -17,6 +17,9 @@ var sshSuccess = regexp.MustCompile(`^Accepted (?:password|publickey|keyboard-in
 // Normalize is deterministic. Unparseable input is retained in quarantine, never discarded.
 func Normalize(r RawRecord) Normalized {
 	n := Normalized{Sequence: r.Sequence, ID: ID(r.AgentID, r.Raw.ID), AgentID: r.AgentID, AssetID: r.AssetID, Source: r.Raw.Source, ReceivedAt: r.ReceivedAt, EventTime: r.Raw.ObservedAt, Parser: "native-auth/1", Status: "parsed", Class: "system", Action: "log", Outcome: "unknown"}
+	if r.Raw.Source == "network:cef" {
+		return normalizeCEF(r, n)
+	}
 	fail := func() Normalized {
 		n.Status = "quarantine"
 		n.EventTime = r.ReceivedAt
@@ -37,6 +40,7 @@ func Normalize(r RawRecord) Normalized {
 			return fail()
 		}
 		n.EventTime = time.UnixMicro(micros).UTC()
+		normalizeNetfilter(&n, field("_TRANSPORT"), field("_HOSTNAME"), msg)
 		exe := path.Base(field("_EXE"))
 		if field("_UID") == "0" && (exe == "sshd" || exe == "sshd-session") {
 			for i, re := range []*regexp.Regexp{sshFailure, sshSuccess} {

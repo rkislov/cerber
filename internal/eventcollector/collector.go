@@ -56,7 +56,7 @@ func run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 func (n Native) Read(ctx context.Context, cursor string) ([]telemetry.Raw, error) {
-	if !telemetry.ValidSource(n.Source) || len(cursor) > 2048 || strings.ContainsAny(cursor, "\x00\r\n") {
+	if n.Source == "network:cef" || !telemetry.ValidSource(n.Source) || len(cursor) > 2048 || strings.ContainsAny(cursor, "\x00\r\n") {
 		return nil, telemetry.ErrInvalid
 	}
 	runner := n.Runner
@@ -71,11 +71,11 @@ func (n Native) Read(ctx context.Context, cursor string) ([]telemetry.Raw, error
 	var data []byte
 	var e error
 	if n.Source == "journald" {
-		args := []string{"--no-pager", "--quiet", "--output=json", "--all", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,SYSLOG_IDENTIFIER,_COMM,_UID,_EXE", "--lines=100", "--reverse"}
+		args := []string{"--no-pager", "--quiet", "--output=json", "--all", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,SYSLOG_IDENTIFIER,_COMM,_UID,_EXE,_TRANSPORT,_HOSTNAME", "--lines=100", "--reverse"}
 		// journalctl --lines selects the newest entries. For incremental reads use
 		// streaming forward order and stop after 100, preserving backlog rather than tailing it.
 		if cursor != "" {
-			args = []string{"--no-pager", "--quiet", "--output=json", "--all", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,SYSLOG_IDENTIFIER,_COMM,_UID,_EXE", "--after-cursor=" + cursor}
+			args = []string{"--no-pager", "--quiet", "--output=json", "--all", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,SYSLOG_IDENTIFIER,_COMM,_UID,_EXE,_TRANSPORT,_HOSTNAME", "--after-cursor=" + cursor}
 			return n.readJournalStream(ctx, runner, args)
 		}
 		data, e = runner(ctx, "journalctl", args...)

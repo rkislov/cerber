@@ -385,13 +385,40 @@ func correlate(ctx context.Context, tx *sql.Tx, n telemetry.Normalized) error {
 			return e
 		}
 	}
+	if n.Class == "firewall" || n.Class == "fess" {
+		rows, err := tx.QueryContext(ctx, `SELECT payload FROM normalized_events WHERE class=? AND status='parsed' AND outcome='failure' AND agent_id=? AND source_ip=? AND json_extract(payload,'$.product')=? AND coalesce(json_extract(payload,'$.device'),'')=? AND coalesce(json_extract(payload,'$.destination_ip'),'')=? AND event_time>=? AND event_time<=? AND sequence<=? ORDER BY event_time DESC,sequence DESC LIMIT 100`, n.Class, n.AgentID, n.SourceIP, n.Product, n.Device, n.DestinationIP, stamp(n.EventTime.Add(-correlation.Window)), stamp(n.EventTime), n.Sequence)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var p string
+			var f telemetry.Normalized
+			if err = rows.Scan(&p); err != nil {
+				rows.Close()
+				return err
+			}
+			if err = json.Unmarshal([]byte(p), &f); err != nil {
+				rows.Close()
+				return err
+			}
+			failures = append(failures, f)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+	}
 	d := correlation.Evaluate(n, failures)
+	if n.Class == "firewall" || n.Class == "fess" {
+		d = correlation.Network(n, failures)
+	}
 	if d == nil {
 		return nil
 	}
-	if d.Rule == "auth.repeated_failures" {
+	if d.Rule == "auth.repeated_failures" || n.Class == "firewall" || n.Class == "fess" {
 		var count int
-		if e := tx.QueryRowContext(ctx, "SELECT count(*) FROM detections WHERE rule=? AND agent_id=? AND user_name=? AND source_ip=? AND event_time>=? AND event_time<=?", d.Rule, n.AgentID, n.User, n.SourceIP, stamp(n.EventTime.Add(-correlation.Window)), stamp(n.EventTime.Add(correlation.Window))).Scan(&count); e != nil {
+		if e := tx.QueryRowContext(ctx, "SELECT count(*) FROM detections WHERE rule=? AND agent_id=? AND user_name=? AND source_ip=? AND coalesce(json_extract(payload,'$.group_key'),'')=? AND event_time>=? AND event_time<=?", d.Rule, n.AgentID, d.User, n.SourceIP, d.GroupKey, stamp(n.EventTime.Add(-correlation.Window)), stamp(n.EventTime.Add(correlation.Window))).Scan(&count); e != nil {
 			return e
 		}
 		if count > 0 {

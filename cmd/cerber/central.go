@@ -134,6 +134,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		listen := f.String("listen", "127.0.0.1:8790", "receiver address")
 		cert := f.String("tls-cert", "", "TLS certificate")
 		key := f.String("tls-key", "", "TLS private key")
+		secureCookies := f.Bool("admin-secure-cookies", false, "HTTPS-only console behind a trusted local TLS proxy")
 		adminEnabled := f.Bool("admin", false, "enable named-account administration console")
 		adminKey := f.String("admin-key", "", "legacy bootstrap key JSON file; login allowed only before named users exist")
 		offline := f.Duration("offline-after", 15*time.Minute, "automatic offline alert threshold/grace")
@@ -216,7 +217,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			if err != nil {
 				return err
 			}
-			handler, err := admin.NewHandler(store, token, admin.Options{PatchEnabled: *patchKey != "", SecureCookies: *cert != "", Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory, OIDC: identityProvider})
+			handler, err := admin.NewHandler(store, token, admin.Options{PatchEnabled: *patchKey != "", SecureCookies: *cert != "" || *secureCookies, Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory, OIDC: identityProvider})
 			if err != nil {
 				return err
 			}
