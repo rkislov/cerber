@@ -241,6 +241,8 @@ func (s *Server) View(ctx context.Context) (map[string]any, error) {
 	return out, nil
 }
 func (s *Server) Exchange(ctx context.Context, agent, asset string, report Report) (Signed, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if len(report.Findings) > 100 || len(report.Blocks) > 100 || len(report.Error) > 2000 {
 		return Signed{}, ErrInvalid
 	}
