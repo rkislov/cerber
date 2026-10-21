@@ -8,8 +8,9 @@ function setup(){
  function node(){return {open:false,children:[],handlers:{},scrollTop:99,addEventListener(k,f){this.handlers[k]=f},append(...v){this.children.push(...v)},replaceChildren(...v){this.children=v},showModal(){this.open=true},close(){this.open=false},getBoundingClientRect(){return {left:100,right:600,top:100,bottom:500}}}}
  const $=id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id)};
  const errors=[];
- const ctx=vm.createContext({$,el:()=>node(),api:async()=>({title:'ThreatFox',id:'threatfox.ip_match',version:1,false_positives:null,investigation:null,references:null}),date:String,short:String,error:e=>errors.push(e),URL});
- for(const name of ['attack.js','events.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'../static',name),'utf8'),ctx);
+ const document={getElementById:$,querySelectorAll:()=>[]};
+ const ctx=vm.createContext({document,$,el:()=>node(),api:async()=>({title:'ThreatFox',id:'threatfox.ip_match',version:1,false_positives:null,investigation:null,references:null}),date:String,short:String,error:e=>errors.push(e),URL});
+ for(const name of ['dialogs.js','attack.js','events.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'../static',name),'utf8'),ctx);
  return {$,ctx,errors};
 }
 test('ThreatFox rule with absent optional lists opens repeatedly and switches inspector layers',async()=>{

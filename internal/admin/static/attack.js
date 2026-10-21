@@ -2,7 +2,7 @@
 "use strict";
 // Keep read-only inspectors in a single modal layer. Editing dialogs are untouched.
 const inspectionDialogs=["raw-dialog","rule-dialog","attack-dialog"];
-function openInspection(id){const dialog=$(id);for(const other of inspectionDialogs){if(other!==id&&$(other).open)$(other).close()}if(!dialog.open)dialog.showModal();dialog.scrollTop=0}
+function openInspection(id){const dialog=$(id);for(const other of inspectionDialogs){if(other!==id&&$(other).open)$(other).close()}openDialog(id)}
 for(const id of inspectionDialogs){const dialog=$(id);let backdrop=false;const outside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)};dialog.addEventListener("pointerdown",e=>{backdrop=outside(e)});dialog.addEventListener("click",e=>{if(backdrop&&outside(e))dialog.close();backdrop=false})}
 
 function resetAttack(){if($("attack-dialog").open)$("attack-dialog").close();$("attack-content").replaceChildren();$("attack-summary")?.replaceChildren()}

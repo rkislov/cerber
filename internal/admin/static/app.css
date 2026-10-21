@@ -30,3 +30,8 @@
 #raw-dialog .detail-header,#rule-dialog .detail-header,#attack-dialog .detail-header{position:sticky;top:0;z-index:1;background:white;gap:16px}
 #raw-dialog .detail-header>h2,#rule-dialog .detail-header>div,#attack-dialog .detail-header>div{min-width:0;overflow-wrap:anywhere}
 #raw-close,#rule-close,#attack-close{flex:0 0 36px;position:sticky;top:24px}
+
+/* All modal headers retain a reachable close control, including long forms. */
+dialog .detail-header{position:sticky;top:0;z-index:2;background:white;gap:16px}
+dialog .detail-header>div,dialog .detail-header>h2{min-width:0;overflow-wrap:anywhere}
+dialog .detail-header .icon-button{flex:0 0 36px;align-self:flex-start}
