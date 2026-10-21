@@ -13,6 +13,8 @@ import (
 	"github.com/rkislov/cerber/internal/telemetry"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"time"
 )
 
@@ -102,7 +104,17 @@ func (l *Local) save() error {
 	if closeErr != nil {
 		return closeErr
 	}
-	return os.Rename(name, l.path)
+	if e = os.Rename(name, l.path); e != nil {
+		return e
+	}
+	files, _ := filepath.Glob(l.path + ".ioc.*")
+	for _, p := range files {
+		version := strings.TrimPrefix(p, l.path+".ioc.")
+		if version != l.state.FeedVersion && telemetry.Identifier(version) {
+			_ = os.Remove(p)
+		}
+	}
+	return nil
 }
 func (l *Local) Step(ctx context.Context, client Client) error {
 	now := time.Now().UTC()
@@ -190,7 +202,7 @@ func (l *Local) Step(ctx context.Context, client Client) error {
 		} else if next.FeedVersion != l.state.FeedVersion {
 			return fmt.Errorf("IOC snapshot missing")
 		}
-		if b.Policy.ID != next.Policy.ID || b.Policy.Version != next.Policy.Version {
+		if b.Policy.ID != next.Policy.ID || b.Policy.Scan != next.Policy.Scan || b.Policy.ScanIntervalMinutes != next.Policy.ScanIntervalMinutes || b.Policy.ScanHourUTC != next.Policy.ScanHourUTC || !reflect.DeepEqual(b.Policy.Exclude, next.Policy.Exclude) {
 			l.state.Cursor = ""
 			l.state.NextScan = time.Time{}
 		}

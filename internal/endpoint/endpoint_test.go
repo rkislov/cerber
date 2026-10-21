@@ -167,3 +167,25 @@ func TestOfflineCancellationAcknowledgmentSurvivesUntilExchange(t *testing.T) {
 		t.Fatal("rollback not reported", e, client.report)
 	}
 }
+
+func TestCacheCleanupKeepsOnlyCommittedVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	current, old := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	os.WriteFile(path+".ioc."+current, []byte("current"), 0600)
+	os.WriteFile(path+".ioc."+old, []byte("old"), 0600)
+	os.WriteFile(path+".ioc.notes", []byte("unrelated"), 0600)
+	l := &Local{path: path, state: localState{FeedVersion: current}}
+	if e := l.save(); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := os.Stat(path + ".ioc." + old); !os.IsNotExist(e) {
+		t.Fatal("obsolete cache retained")
+	}
+	if _, e := os.Stat(path + ".ioc." + current); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := os.Stat(path + ".ioc.notes"); e != nil {
+		t.Fatal("unrelated file removed")
+	}
+}
