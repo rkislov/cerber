@@ -3,7 +3,10 @@ package endpoint
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/rkislov/cerber/internal/netscan"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -78,5 +81,32 @@ func TestNetworkCancelledLeaseNeverDelivered(t *testing.T) {
 	}
 	if b, e := s.networkExchange(ctx, agent, nil); e != nil || b != nil {
 		t.Fatal("cancelled delivered", e)
+	}
+}
+
+func TestNetworkRestartReportsInterruptionWithoutRepeating(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state")
+	r := netscan.Result{ID: "01234567890123456789012345678901", State: "running", Started: time.Now()}
+	data, _ := json.Marshal(r)
+	if e := writeBlob(path+".network", data); e != nil {
+		t.Fatal(e)
+	}
+	l := &Local{path: path}
+	got := l.networkReport()
+	if got == nil || got.State != "interrupted" {
+		t.Fatal(got)
+	}
+	task := netscan.Task{ID: r.ID, CIDR: "192.0.2.1/32", Targets: []string{"192.0.2.1"}, Profile: "discovery", Expires: time.Now().Add(time.Minute)}
+	if e := l.networkStep(context.Background(), &task); e != nil {
+		t.Fatal(e)
+	}
+	if l.network.task != "" {
+		t.Fatal("restarted an interrupted command")
+	}
+	if e := l.networkStep(context.Background(), nil); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := os.Stat(path + ".network"); !os.IsNotExist(e) {
+		t.Fatal("ack did not clear result", e)
 	}
 }
