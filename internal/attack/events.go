@@ -62,6 +62,7 @@ func Event(class, action, outcome, status string) *Assessment {
 	}
 	if class == "firewall" || class == "fess" {
 		a := assessment("event_context", "Действие сетевой защиты само по себе не определяет технику ATT&CK.")
+		a.Next = []string{"Проверить исходную запись, источник и назначение соединения", "Сопоставить серию событий с корреляциями и журналами целевого приложения"}
 		switch action {
 		case "deny":
 			a.effect("blocked", "Наблюдалась блокировка; успешная эксплуатация или недоступность сервиса не установлены.", "Действие deny")
