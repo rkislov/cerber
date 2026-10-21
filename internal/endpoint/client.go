@@ -31,6 +31,7 @@ type localState struct {
 	NextSync    time.Time          `json:"next_sync"`
 }
 type Local struct {
+	apply func(context.Context, Block, bool) error
 	path  string
 	key   ed25519.PublicKey
 	agent string
@@ -122,7 +123,7 @@ func (l *Local) Step(ctx context.Context, client Client) error {
 			}
 		}
 		if !found {
-			if e := firewall(ctx, old, false); e != nil {
+			if e := l.firewall(ctx, old, false); e != nil {
 				keep = append(keep, old)
 				l.state.Report.Blocks[old.ID] = "rollback_failed"
 			} else {
@@ -150,7 +151,7 @@ func (l *Local) Step(ctx context.Context, client Client) error {
 					return e
 				}
 			}
-			if e := firewall(ctx, d, true); e != nil {
+			if e := l.firewall(ctx, d, true); e != nil {
 				l.state.Report.Blocks[d.ID] = "apply_failed"
 			} else {
 				l.state.Report.Blocks[d.ID] = "applied"
@@ -255,4 +256,11 @@ func writeBlob(path string, data []byte) error {
 		return ce
 	}
 	return os.Rename(name, path)
+}
+
+func (l *Local) firewall(ctx context.Context, b Block, add bool) error {
+	if l.apply != nil {
+		return l.apply(ctx, b, add)
+	}
+	return firewall(ctx, b, add)
 }
