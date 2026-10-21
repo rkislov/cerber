@@ -3,7 +3,7 @@
 set -eu
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 binary= config= server= credentials= address=127.0.0.1 name=localhost
-privileged=false start=false refresh=false
+privileged=false start=false refresh=false network_scanner=false
 while [ "$#" -gt 0 ]; do
  case "$1" in
  --binary) binary=$2; shift 2;; --config) config=$2; shift 2;;
@@ -11,6 +11,7 @@ while [ "$#" -gt 0 ]; do
  --address) address=$2; shift 2;; --name) name=$2; shift 2;;
  --privileged) privileged=true; shift;; --start) start=true; shift;;
  --refresh-metadata) refresh=true; shift;;
+ --network-scanner) network_scanner=true; shift;;
  *) echo "Unknown option: $1" >&2; exit 2;; esac
 done
 [ "$(id -u)" = 0 ] || { echo 'Run installer with sudo/root' >&2; exit 1; }
@@ -19,6 +20,14 @@ command -v python3 >/dev/null
 command -v systemctl >/dev/null
 if "$privileged"; then command -v sudo >/dev/null; command -v visudo >/dev/null; fi
 if "$refresh" && ! "$privileged"; then echo '--refresh-metadata requires --privileged' >&2; exit 1; fi
+if "$network_scanner"; then
+ if ! command -v nmap >/dev/null; then
+  if command -v apt-get >/dev/null; then apt-get install -y --no-install-recommends nmap
+  elif command -v dnf >/dev/null; then dnf install -y nmap
+  elif command -v yum >/dev/null; then yum install -y nmap
+  else echo 'Install Nmap using the OS repository before enabling network scans' >&2; exit 1; fi
+ fi
+fi
 for path in /opt/cerber /etc/cerber /var/lib/cerber /etc/systemd/system/cerber-agent.service.d /etc/sudoers.d/cerber-agent; do
  [ ! -L "$path" ] || { echo "Refusing symlink: $path" >&2; exit 1; }
 done

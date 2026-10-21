@@ -322,6 +322,10 @@ func (s *Server) Exchange(ctx context.Context, agent, asset string, report Repor
 	if !report.WantFeed {
 		bundle.FeedVersion = report.FeedVersion
 	}
+	bundle.Network, e = s.networkExchange(ctx, agent, report.Network)
+	if e != nil {
+		return Signed{}, e
+	}
 	return Sign(bundle, s.key)
 }
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }

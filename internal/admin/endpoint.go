@@ -9,6 +9,9 @@ import (
 )
 
 func endpointManagement(server *endpoint.Server, store Store, w http.ResponseWriter, r *http.Request, u User) bool {
+	if r.URL.Path == "/admin/api/network" {
+		return networkManagement(server, store, w, r, u)
+	}
 	if r.URL.Path != "/admin/api/endpoint" {
 		return false
 	}
@@ -81,6 +84,57 @@ func endpointManagement(server *endpoint.Server, store Store, w http.ResponseWri
 	}
 	if e = server.Command(r.Context(), c, u.Username, protected); e != nil {
 		http.Error(w, "Invalid command, policy conflict, protected IP or missing confirmation", 400)
+	} else {
+		writeJSON(w, map[string]bool{"ok": true})
+	}
+	return true
+}
+
+func networkManagement(server *endpoint.Server, store Store, w http.ResponseWriter, r *http.Request, u User) bool {
+	if server == nil {
+		http.Error(w, "endpoint signing not configured", 503)
+		return true
+	}
+	if r.Method == "GET" {
+		v, e := server.NetworkView(r.Context())
+		if e != nil {
+			storageError(w, e)
+		} else {
+			writeJSON(w, v)
+		}
+		return true
+	}
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", 405)
+		return true
+	}
+	if u.Role != "administrator" || u.Username == "" {
+		http.Error(w, "forbidden", 403)
+		return true
+	}
+	var c endpoint.NetworkCommand
+	if !decodeJSON(w, r, 64<<10, &c) {
+		return true
+	}
+	if c.Action == "create" {
+		agents, e := store.AgentStatuses(r.Context(), "", "", 1000)
+		if e != nil {
+			storageError(w, e)
+			return true
+		}
+		known := false
+		for _, a := range agents {
+			if a.AgentID == c.Plan.Agent && !a.Revoked {
+				known = true
+			}
+		}
+		if !known {
+			http.Error(w, "unknown agent", 400)
+			return true
+		}
+	}
+	if e := server.NetworkCommand(r.Context(), c, u.Username); e != nil {
+		http.Error(w, "Invalid network assignment or target range", 400)
 	} else {
 		writeJSON(w, map[string]bool{"ok": true})
 	}

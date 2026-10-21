@@ -35,6 +35,7 @@ type localState struct {
 	NextSync    time.Time          `json:"next_sync"`
 }
 type Local struct {
+	network    networkWorker
 	eventIndex atomic.Pointer[integrations.Index]
 	validUntil atomic.Int64
 	matchCount atomic.Uint64
@@ -192,6 +193,7 @@ func (l *Local) Step(ctx context.Context, client Client) error {
 		l.state.Report.At = now
 		l.state.Report.FeedVersion = l.state.FeedVersion
 		l.state.Report.WantFeed = l.state.FeedVersion == "" || !now.Before(l.state.NextFeed)
+		l.state.Report.Network = l.networkReport()
 		s, e := client.EndpointExchange(ctx, l.state.Report)
 		if e != nil {
 			return e
@@ -234,6 +236,9 @@ func (l *Local) Step(ctx context.Context, client Client) error {
 		l.state.Report.PolicyVersion = next.Policy.Version
 		l.state.NextSync = now.Add(time.Minute)
 		if e = l.save(); e != nil {
+			return e
+		}
+		if e := l.networkStep(ctx, next.Network); e != nil {
 			return e
 		}
 		b = next

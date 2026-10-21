@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/rkislov/cerber/internal/integrations"
+	"github.com/rkislov/cerber/internal/netscan"
 	"net/netip"
 	"strings"
 	"time"
@@ -70,6 +71,7 @@ type Finding struct {
 	At     time.Time `json:"at"`
 }
 type Report struct {
+	Network         *netscan.Result   `json:"network,omitempty"`
 	EventIOCMatches uint64            `json:"event_ioc_matches"`
 	WantFeed        bool              `json:"want_feed"`
 	PolicyVersion   int64             `json:"policy_version"`
@@ -83,6 +85,7 @@ type Report struct {
 	Findings        []Finding         `json:"findings"`
 }
 type Bundle struct {
+	Network     *netscan.Task      `json:"network,omitempty"`
 	Agent       string             `json:"agent"`
 	Issued      time.Time          `json:"issued"`
 	Expires     time.Time          `json:"expires"`
@@ -106,6 +109,9 @@ func Sign(b Bundle, key ed25519.PrivateKey) (Signed, error) {
 func (s Signed) Verify(key ed25519.PublicKey, agent string, now time.Time) (Bundle, error) {
 	var b Bundle
 	if !ed25519.Verify(key, append([]byte("cerber/endpoint/1:"), s.Payload...), s.Signature) || json.Unmarshal(s.Payload, &b) != nil || b.Agent != agent || !now.Before(b.Expires) || b.Issued.After(now.Add(time.Minute)) || b.Expires.Sub(b.Issued) > 25*time.Hour || b.Policy.Validate() != nil {
+		return b, ErrInvalid
+	}
+	if b.Network != nil && (b.Network.Validate() != nil || b.Network.Agent != agent || b.Network.Expires.After(b.Expires)) {
 		return b, ErrInvalid
 	}
 	return b, nil
