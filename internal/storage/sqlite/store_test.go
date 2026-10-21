@@ -167,7 +167,7 @@ func TestMigratesVersionOneDatabase(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
+	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 11 {
 		t.Fatal(version, err)
 	}
 	assets, err := s.Assets(ctx)

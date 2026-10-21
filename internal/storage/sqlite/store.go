@@ -16,6 +16,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+//go:embed patch.sql
+var patchSchema string
+
 //go:embed schema.sql
 var schema string
 
@@ -103,7 +106,7 @@ func (s *Store) init(ctx context.Context) error {
 	case 7:
 	case 8:
 	case 9:
-	case 10:
+	case 10, 11:
 	default:
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
@@ -168,6 +171,11 @@ func (s *Store) init(ctx context.Context) error {
 	}
 	if version < 10 {
 		if _, err = tx.ExecContext(ctx, `ALTER TABLE admin_users RENAME TO admin_users_v9; CREATE TABLE admin_users(username TEXT PRIMARY KEY,role TEXT NOT NULL CHECK(role IN ('administrator','operator','viewer','analyst')),disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),version INTEGER NOT NULL DEFAULT 1 CHECK(version>0),password_hash TEXT NOT NULL);INSERT INTO admin_users SELECT * FROM admin_users_v9;DROP TABLE admin_users_v9;PRAGMA user_version=10;`); err != nil {
+			return err
+		}
+	}
+	if version < 11 {
+		if _, err = tx.ExecContext(ctx, patchSchema+"PRAGMA user_version=11;"); err != nil {
 			return err
 		}
 	}

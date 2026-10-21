@@ -95,7 +95,7 @@ func (c *Client) jobRequest(ctx context.Context, path string, value, result any)
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("job receiver HTTP %d", resp.StatusCode)
 	}
-	d := json.NewDecoder(io.LimitReader(resp.Body, 16384))
+	d := json.NewDecoder(io.LimitReader(resp.Body, 128<<10))
 	d.DisallowUnknownFields()
 	if err = d.Decode(result); err != nil {
 		return fmt.Errorf("invalid job response")

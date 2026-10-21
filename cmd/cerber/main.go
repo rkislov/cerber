@@ -49,7 +49,9 @@ const usage = `Cerber — прототип сканера на Go
   siem acknowledge -id ALERT_ID
   siem evaluate-alerts [-offline-after 15m] [-inventory-max-age 24h]
   siem agents [-asset ID] [-offline-after 15m] [-inventory-max-age 24h] [-limit 100] [-after ID]
-  siem serve [-listen 127.0.0.1:8790] [-tls-cert FILE -tls-key FILE] [-admin] [-admin-key FILE] [-events-db FILE] [-directory-config FILE] [-oidc-config FILE]
+  siem serve [-listen 127.0.0.1:8790] [-tls-cert FILE -tls-key FILE] [-admin] [-admin-key FILE] [-events-db FILE] [-directory-config FILE] [-oidc-config FILE] [-patch-key FILE]
+  patch keygen -out FILE
+  patch executor -config ABSOLUTE_FILE
   siem enroll -asset SERVER_ASSET_ID -out CREDENTIALS_FILE
   siem revoke -agent AGENT_ID
   agent collect -asset LOCAL_ASSET_ID -credentials FILE [-check-package-updates | -check-windows-updates]
@@ -137,6 +139,9 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 			return json.NewEncoder(out).Encode(map[string]bool{"valid": true})
 		}
 		return run(ctx, c.Args(), out, errOut)
+	}
+	if args[0] == "patch" {
+		return patchCommand(ctx, args[1:], out, errOut)
 	}
 	if args[0] == "knowledge" {
 		return knowledgeCommand(ctx, args[1:], out, errOut)

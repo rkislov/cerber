@@ -38,6 +38,19 @@ jobs:
         run: node --check internal/admin/static/events.js
       - name: Check incident workspace JavaScript
         run: node --check internal/admin/static/incidents.js
+      - name: Check managed update JavaScript and Python syntax
+        run: |
+          node --check internal/admin/static/patches.js
+          python -c "import ast,pathlib; ast.parse(pathlib.Path('internal/patch/dnf.py').read_text())"
+      - name: Check managed update PowerShell syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($file in @('internal/patch/install.ps1','deploy/patch/Install-CerberPatchExecutor.ps1')) {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file), [ref]$tokens, [ref]$errors)
+            if ($errors.Count) { $errors | Format-List; exit 1 }
+          }
       - name: Native event sources and incremental cursors
         env:
           CERBER_NATIVE_SMOKE: '1'

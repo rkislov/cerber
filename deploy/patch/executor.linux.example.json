@@ -1,0 +1,8 @@
+{
+  "agent_id": "REPLACE_WITH_ENROLLED_AGENT_ID",
+  "public_key": "/etc/cerber-patch/signing.pub",
+  "inbox": "/var/lib/cerber-patch/inbox",
+  "outbox": "/var/lib/cerber-patch/outbox",
+  "state": "/var/lib/cerber-patch/private/executor.db",
+  "manager": "apt"
+}
