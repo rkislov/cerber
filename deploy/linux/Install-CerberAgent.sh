@@ -59,7 +59,13 @@ if c.get('database')!='/var/lib/cerber/agent.db':raise SystemExit('Installer req
 for key in ['credentials','ca_cert','patch_inbox','patch_outbox']:
  p=c.get(key)
  if not p:continue
- if key.startswith('patch_'):raise SystemExit('Configure privileged patch executor separately')
+ if key.startswith('patch_'):
+  expected='/var/lib/cerber-patch/'+('inbox' if key=='patch_inbox' else 'outbox')
+  if p!=expected:raise SystemExit('Patch paths must use /var/lib/cerber-patch/inbox and outbox')
+  for directory in ['/var/lib/cerber-patch',p]:
+   st=os.lstat(directory)
+   if not stat.S_ISDIR(st.st_mode) or st.st_uid!=0:raise SystemExit('Patch directories must be real root-owned directories')
+  continue
  if os.path.commonpath([os.path.abspath(p),'/etc/cerber'])!='/etc/cerber':raise SystemExit('Credentials/CA must be inside /etc/cerber')
  if os.path.islink(p):raise SystemExit('Input symlink refused')
  os.chown(p,0,__import__('grp').getgrnam('cerber').gr_gid);os.chmod(p,0o640)
