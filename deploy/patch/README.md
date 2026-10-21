@@ -76,6 +76,8 @@ APT сначала проверяет план без дополнительны
 архивы. DNF проверяет точный набор транзакции и подписи пакетов; ключи автоматически
 не импортируются. Новые зависимости требуют отдельного согласования и пока отклоняются.
 
+Linux installer upgrades preserve an already configured executor when `patch_inbox` and `patch_outbox` use the fixed paths above and their directories are owned by root. The signing key and executor still require the separate setup described here.
+
 ## Windows
 
 Сначала установите обычный `CerberAgent` под LocalService по инструкции `deploy/windows`.
