@@ -200,6 +200,9 @@ func (l *Local) Step(ctx context.Context, client Client) error {
 		if e != nil {
 			return e
 		}
+		if valid == nil && (next.Issued.Before(b.Issued) || next.Policy.ID == b.Policy.ID && next.Policy.Version < b.Policy.Version) {
+			return fmt.Errorf("endpoint replay rejected")
+		}
 		if next.IOCs != nil {
 			if snapshotID(next.IOCs) != next.FeedVersion && next.FeedVersion != "" {
 				return fmt.Errorf("IOC bundle digest mismatch")
@@ -220,9 +223,6 @@ func (l *Local) Step(ctx context.Context, client Client) error {
 		if b.Policy.ID != next.Policy.ID || b.Policy.Scan != next.Policy.Scan || b.Policy.ScanIntervalMinutes != next.Policy.ScanIntervalMinutes || b.Policy.ScanHourUTC != next.Policy.ScanHourUTC || !reflect.DeepEqual(b.Policy.Exclude, next.Policy.Exclude) {
 			l.state.Cursor = ""
 			l.state.NextScan = time.Time{}
-		}
-		if valid == nil && next.Issued.Before(b.Issued) {
-			return fmt.Errorf("endpoint replay rejected")
 		}
 		if l.state.Report.WantFeed {
 			l.state.NextFeed = now.Add(time.Duration(next.Policy.SyncMinutes) * time.Minute)

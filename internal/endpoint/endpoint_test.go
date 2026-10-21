@@ -255,3 +255,30 @@ func TestEndpointReceivesBoundedLongPathFindingBatch(t *testing.T) {
 		t.Fatal("non-bearer credential accepted")
 	}
 }
+
+func TestReplayRejectedBeforeIOCCacheMutation(t *testing.T) {
+	pub, key, _ := ed25519.GenerateKey(rand.Reader)
+	now := time.Now().UTC()
+	p := testPolicy("off")
+	p.ID = "stable"
+	p.Version = 2
+	current := Bundle{Agent: "agent", Issued: now, Expires: now.Add(time.Hour), Policy: p}
+	signed, _ := Sign(current, key)
+	items := []integrations.IOC{{ID: "old", Type: "ip", Value: "192.0.2.1"}}
+	old := current
+	old.Issued = now.Add(-time.Minute)
+	old.IOCs = items
+	old.FeedVersion = snapshotID(items)
+	reply, _ := Sign(old, key)
+	l := &Local{path: filepath.Join(t.TempDir(), "state.json"), key: pub, agent: "agent", state: localState{Signed: signed}}
+	if e := l.Step(context.Background(), &fakeExchange{reply: reply}); e == nil {
+		t.Fatal("replay accepted")
+	}
+	if l.state.FeedVersion != "" || len(l.state.IOCs) != 0 {
+		t.Fatal("cache mutated before replay rejection")
+	}
+	files, _ := filepath.Glob(l.path + ".ioc.*")
+	if len(files) != 0 {
+		t.Fatal("replayed cache was written")
+	}
+}
