@@ -161,3 +161,17 @@ func TestResultCannotHidePartialFailure(t *testing.T) {
 		t.Fatal("valid partial")
 	}
 }
+
+func TestRebootHintRequiresObservedKernelInstall(t *testing.T) {
+	q := request()
+	q.Updates[0].Title = "kernel-core"
+	n := Native{ReadFile: func(string) ([]byte, error) { return nil, os.ErrNotExist }}
+	r := Failure(q, "not_installed")
+	if n.linuxReboot(q, r) != "unknown" {
+		t.Fatal("failed kernel update reported reboot required")
+	}
+	r.Items[0].Status = "installed"
+	if n.linuxReboot(q, r) != "yes" {
+		t.Fatal("installed kernel reboot hint missing")
+	}
+}
