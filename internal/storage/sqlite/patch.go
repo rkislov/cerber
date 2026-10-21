@@ -66,7 +66,7 @@ func (s *Store) PatchCommand(ctx context.Context, c patch.Command, now time.Time
 	if e != nil {
 		return j, e
 	}
-	q := patch.Request{SchemaVersion: 1, ID: id, AgentID: c.AgentID, InventoryID: inventoryID, Mode: c.Action, Manager: snap.PackageManager, ExpiresAt: now.Add(time.Hour), NoReboot: true}
+	q := patch.Request{SchemaVersion: 1, ID: id, AgentID: c.AgentID, InventoryID: inventoryID, Mode: c.Action, Manager: snap.PackageManager, ExpiresAt: now.UTC().Add(time.Hour).Truncate(time.Second), NoReboot: true}
 	if snap.OS.Family == "windows" {
 		q.Manager = "wua"
 	}
