@@ -70,16 +70,17 @@ type Finding struct {
 	At     time.Time `json:"at"`
 }
 type Report struct {
-	WantFeed      bool              `json:"want_feed"`
-	PolicyVersion int64             `json:"policy_version"`
-	FeedVersion   string            `json:"feed_version"`
-	At            time.Time         `json:"at"`
-	Scanned       int               `json:"scanned"`
-	Skipped       int               `json:"skipped"`
-	ScanState     string            `json:"scan_state"`
-	Error         string            `json:"error"`
-	Blocks        map[string]string `json:"blocks"`
-	Findings      []Finding         `json:"findings"`
+	EventIOCMatches uint64            `json:"event_ioc_matches"`
+	WantFeed        bool              `json:"want_feed"`
+	PolicyVersion   int64             `json:"policy_version"`
+	FeedVersion     string            `json:"feed_version"`
+	At              time.Time         `json:"at"`
+	Scanned         int               `json:"scanned"`
+	Skipped         int               `json:"skipped"`
+	ScanState       string            `json:"scan_state"`
+	Error           string            `json:"error"`
+	Blocks          map[string]string `json:"blocks"`
+	Findings        []Finding         `json:"findings"`
 }
 type Bundle struct {
 	Agent       string             `json:"agent"`

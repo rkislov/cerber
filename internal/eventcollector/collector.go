@@ -334,3 +334,17 @@ func Cycle(ctx context.Context, spool Spool, sender Sender, agent string, source
 	result.ObservedAt = time.Now().UTC()
 	return result
 }
+
+// ObservedSource preserves original records and cursor semantics while allowing passive local IOC evaluation.
+type ObservedSource struct {
+	Source
+	Observe func([]telemetry.Raw)
+}
+
+func (s ObservedSource) Read(ctx context.Context, cursor string) ([]telemetry.Raw, error) {
+	records, e := s.Source.Read(ctx, cursor)
+	if e == nil && s.Observe != nil {
+		s.Observe(records)
+	}
+	return records, e
+}
