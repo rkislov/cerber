@@ -25,3 +25,8 @@
 .security-event-table{width:100%;min-width:960px;table-layout:fixed}.security-event-table .event-source-col{width:150px}.security-event-table .event-identity-col{width:170px}.security-event-table .event-state-col{width:112px}.security-event-table .event-actions-col{width:174px}.security-event-table th,.security-event-table td{padding:16px 14px;vertical-align:top}#security-events td{max-width:none;min-width:0;overflow-wrap:anywhere}#security-events .subtext{white-space:normal;overflow-wrap:anywhere;max-width:100%;line-height:1.55}#security-events .event-kind{font-size:13px;font-weight:600;line-height:1.45;margin-bottom:6px}#security-events .event-message-preview{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;max-height:4.65em;word-break:normal}#security-events .event-actions-cell .text-button{display:block;text-align:left;white-space:normal;max-width:100%;padding:3px 0;margin:0 0 9px;line-height:1.4}#security-events .badge{max-width:100%;white-space:normal;overflow-wrap:anywhere}
 .security-event-table td{white-space:normal}
 #security-events .event-message-preview{font-size:11px;color:#64778b}
+
+/* Inspector controls stay reachable while long event/rule explanations scroll. */
+#raw-dialog .detail-header,#rule-dialog .detail-header,#attack-dialog .detail-header{position:sticky;top:0;z-index:1;background:white;gap:16px}
+#raw-dialog .detail-header>h2,#rule-dialog .detail-header>div,#attack-dialog .detail-header>div{min-width:0;overflow-wrap:anywhere}
+#raw-close,#rule-close,#attack-close{flex:0 0 36px;position:sticky;top:24px}
