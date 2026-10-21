@@ -9,12 +9,41 @@ import (
 	"time"
 )
 
-func integrationManagement(store *integrations.Store, w http.ResponseWriter, r *http.Request, user User, slots chan struct{}) bool {
-	if r.URL.Path != "/admin/api/settings" && r.URL.Path != "/admin/api/settings/test-smtp" && r.URL.Path != "/admin/api/settings/test-threatfox" {
+func integrationManagement(store *integrations.Store, w http.ResponseWriter, r *http.Request, user User, slots chan struct{}, workers ...*integrations.Worker) bool {
+	if r.URL.Path != "/admin/api/settings/runtime" && r.URL.Path != "/admin/api/settings/sync-threatfox" && r.URL.Path != "/admin/api/settings" && r.URL.Path != "/admin/api/settings/test-smtp" && r.URL.Path != "/admin/api/settings/test-threatfox" {
 		return false
 	}
 	if user.Role != "administrator" || user.Username == "" {
 		http.Error(w, "forbidden", 403)
+		return true
+	}
+	var worker *integrations.Worker
+	if len(workers) > 0 {
+		worker = workers[0]
+	}
+	if r.URL.Path == "/admin/api/settings/runtime" {
+		if r.Method != "GET" {
+			http.Error(w, "method not allowed", 405)
+			return true
+		}
+		if worker == nil {
+			http.Error(w, "worker unavailable", 503)
+			return true
+		}
+		writeJSON(w, worker.Status(r.Context()))
+		return true
+	}
+	if r.URL.Path == "/admin/api/settings/sync-threatfox" {
+		if r.Method != "POST" {
+			http.Error(w, "method not allowed", 405)
+			return true
+		}
+		if worker == nil {
+			http.Error(w, "worker unavailable", 503)
+			return true
+		}
+		worker.Sync()
+		writeJSON(w, map[string]bool{"ok": true})
 		return true
 	}
 	if store == nil {
@@ -44,6 +73,9 @@ func integrationManagement(store *integrations.Store, w http.ResponseWriter, r *
 			}
 			http.Error(w, http.StatusText(status), status)
 			return true
+		}
+		if worker != nil && c.Scope == "threatfox" {
+			worker.Sync()
 		}
 		writeJSON(w, store.View())
 		return true

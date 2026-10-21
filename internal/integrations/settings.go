@@ -22,6 +22,7 @@ var ErrInvalid = errors.New("invalid integration settings")
 var ErrConflict = errors.New("settings changed; reload current version")
 
 type SMTP struct {
+	Enabled  bool     `json:"enabled"`
 	Host     string   `json:"host"`
 	Port     int      `json:"port"`
 	Security string   `json:"security"`
@@ -37,20 +38,24 @@ type Change struct {
 	Fields  []string  `json:"fields"`
 }
 type configuration struct {
-	Version      int64    `json:"version"`
-	SMTP         SMTP     `json:"smtp"`
-	ThreatFoxKey string   `json:"threatfox_key,omitempty"`
-	History      []Change `json:"history"`
+	ThreatFoxEnabled bool     `json:"threatfox_enabled"`
+	Version          int64    `json:"version"`
+	SMTP             SMTP     `json:"smtp"`
+	ThreatFoxKey     string   `json:"threatfox_key,omitempty"`
+	History          []Change `json:"history"`
 }
 type View struct {
-	Configured      bool     `json:"configured"`
-	Version         int64    `json:"version"`
-	SMTP            SMTP     `json:"smtp"`
-	SMTPPasswordSet bool     `json:"smtp_password_set"`
-	ThreatFoxKeySet bool     `json:"threatfox_key_set"`
-	History         []Change `json:"history"`
+	ThreatFoxEnabled bool     `json:"threatfox_enabled"`
+	Configured       bool     `json:"configured"`
+	Version          int64    `json:"version"`
+	SMTP             SMTP     `json:"smtp"`
+	SMTPPasswordSet  bool     `json:"smtp_password_set"`
+	ThreatFoxKeySet  bool     `json:"threatfox_key_set"`
+	History          []Change `json:"history"`
 }
 type Command struct {
+	Scope             string  `json:"scope,omitempty"`
+	ThreatFoxEnabled  *bool   `json:"threatfox_enabled,omitempty"`
 	Version           int64   `json:"version"`
 	SMTP              SMTP    `json:"smtp"`
 	SMTPPassword      *string `json:"smtp_password,omitempty"`
@@ -125,7 +130,7 @@ func Open(path, keyPath string) (*Store, error) {
 func (s *Store) View() View {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	v := View{Configured: true, Version: s.config.Version, SMTP: s.config.SMTP, SMTPPasswordSet: s.config.SMTP.Password != "", ThreatFoxKeySet: s.config.ThreatFoxKey != "", History: append([]Change{}, s.config.History...)}
+	v := View{ThreatFoxEnabled: s.config.ThreatFoxEnabled, Configured: true, Version: s.config.Version, SMTP: s.config.SMTP, SMTPPasswordSet: s.config.SMTP.Password != "", ThreatFoxKeySet: s.config.ThreatFoxKey != "", History: append([]Change{}, s.config.History...)}
 	v.SMTP.Password = ""
 	v.SMTP.To = append([]string{}, v.SMTP.To...)
 	return v
@@ -167,6 +172,12 @@ func validate(c configuration) error {
 			return ErrInvalid
 		}
 	}
+	if m.Enabled && (m.Host == "" || m.From == "" || len(m.To) == 0) {
+		return ErrInvalid
+	}
+	if c.ThreatFoxEnabled && c.ThreatFoxKey == "" {
+		return ErrInvalid
+	}
 	if m.Password != "" && m.Username == "" {
 		return ErrInvalid
 	}
@@ -191,14 +202,28 @@ func (s *Store) Save(c Command, actor string) error {
 	}
 	next := s.config
 	next.Version++
-	next.SMTP = c.SMTP
-	next.SMTP.To = append([]string{}, c.SMTP.To...)
-	next.SMTP.Password = s.config.SMTP.Password
-	if c.SMTPPassword != nil {
-		next.SMTP.Password = *c.SMTPPassword
+	if c.Scope != "" && c.Scope != "smtp" && c.Scope != "threatfox" {
+		return ErrInvalid
 	}
-	if c.ClearSMTPPassword {
-		next.SMTP.Password = ""
+	if c.Scope == "smtp" && (c.ThreatFoxKey != nil || c.ClearThreatFoxKey || c.ThreatFoxEnabled != nil) {
+		return ErrInvalid
+	}
+	if c.Scope == "threatfox" && (c.SMTPPassword != nil || c.ClearSMTPPassword) {
+		return ErrInvalid
+	}
+	if c.Scope != "threatfox" {
+		next.SMTP = c.SMTP
+		next.SMTP.To = append([]string{}, c.SMTP.To...)
+		next.SMTP.Password = s.config.SMTP.Password
+		if c.SMTPPassword != nil {
+			next.SMTP.Password = *c.SMTPPassword
+		}
+		if c.ClearSMTPPassword {
+			next.SMTP.Password = ""
+		}
+	}
+	if c.ThreatFoxEnabled != nil {
+		next.ThreatFoxEnabled = *c.ThreatFoxEnabled
 	}
 	if c.ThreatFoxKey != nil {
 		next.ThreatFoxKey = *c.ThreatFoxKey
@@ -209,8 +234,11 @@ func (s *Store) Save(c Command, actor string) error {
 	if e := validate(next); e != nil {
 		return e
 	}
-	fields := []string{"smtp"}
-	if c.ThreatFoxKey != nil || c.ClearThreatFoxKey {
+	fields := []string{}
+	if c.Scope != "threatfox" {
+		fields = append(fields, "smtp")
+	}
+	if c.Scope == "threatfox" || c.ThreatFoxKey != nil || c.ClearThreatFoxKey {
 		fields = append(fields, "threatfox_key")
 	}
 	next.History = append(append([]Change{}, s.config.History...), Change{At: time.Now().UTC(), Actor: actor, Version: next.Version, Fields: fields})
