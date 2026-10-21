@@ -72,3 +72,10 @@ func TestEventHealthRetainsSuccessAndClonesState(t *testing.T) {
 		t.Fatal("shared heartbeat memory")
 	}
 }
+
+func TestHealthReportsProcessPrivilege(t *testing.T) {
+	h := new(Health).Snapshot("agent")
+	if h.Privilege != Privilege() || h.Privilege == "" {
+		t.Fatal(h.Privilege)
+	}
+}

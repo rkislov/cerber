@@ -24,3 +24,10 @@ func TestNetfilterTrustedTransport(t *testing.T) {
 		}
 	}
 }
+
+func TestNetfilterSYNDoesNotClaimDenial(t *testing.T) {
+	n := Normalized{Status: "parsed"}
+	if !normalizeNetfilter(&n, "kernel", "fw", "CERBER_NFT_SYN IN=eth0 OUT= SRC=192.0.2.1 DST=192.0.2.2 PROTO=TCP DPT=1234 SYN") || n.Action != "syn" || n.Outcome != "unknown" {
+		t.Fatal(n)
+	}
+}

@@ -73,3 +73,32 @@ func TestNetworkRulesIsolationReplayAndEvidence(t *testing.T) {
 		t.Fatal(counts)
 	}
 }
+
+func TestSYNScanKernelEventsWithoutChangingVerdict(t *testing.T) {
+	ctx := context.Background()
+	s, e := Open(ctx, filepath.Join(t.TempDir(), "syn.db"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	now := time.Now().UTC().Add(-time.Minute)
+	agent := "syn-agent"
+	b := telemetry.Batch{SchemaVersion: 1, AgentID: agent, ID: telemetry.ID("syn-test")}
+	for i := 0; i < 25; i++ {
+		cursor := fmt.Sprint(i)
+		data, _ := json.Marshal(map[string]string{"MESSAGE": fmt.Sprintf("CERBER_NFT_SYN IN=eth0 OUT= SRC=192.0.2.1 DST=192.0.2.2 PROTO=TCP DPT=%d SYN", 62000+i), "_TRANSPORT": "kernel", "_HOSTNAME": "fixture", "__REALTIME_TIMESTAMP": fmt.Sprint(now.Add(time.Duration(i) * time.Second).UnixMicro())})
+		b.Records = append(b.Records, telemetry.Raw{ID: telemetry.ID("syn", cursor), Cursor: cursor, Source: "journald", ObservedAt: now, Data: data})
+	}
+	if _, e = s.Accept(ctx, agent, "asset", b); e != nil {
+		t.Fatal(e)
+	}
+	for i := 0; i < 2; i++ {
+		if e = s.Step(ctx); e != nil {
+			t.Fatal(e)
+		}
+	}
+	ds, e := s.ReadDetections(ctx, 0, 100)
+	if e != nil || len(ds) != 1 || ds[0].Rule != "firewall.syn_scan" || len(ds[0].Evidence) != 20 {
+		t.Fatalf("%+v %v", ds, e)
+	}
+}

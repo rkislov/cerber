@@ -9,11 +9,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestWindowsServiceLifecycle(t *testing.T) {
+	for _, p := range []bool{false, true} {
+		name := "standard"
+		if p {
+			name = "privileged"
+		}
+		t.Run(name, func(t *testing.T) { windowsServiceLifecycle(t, p) })
+	}
+}
+func windowsServiceLifecycle(t *testing.T, privileged bool) {
 	if os.Getenv("CERBER_SERVICE_SMOKE") != "1" {
 		t.Skip("explicit elevated CI smoke only")
 	}
@@ -77,9 +87,29 @@ func TestWindowsServiceLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Binary", binary).CombinedOutput()
+		args := []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Binary", binary}
+		if privileged {
+			args = append(args, "-Privileged")
+		}
+		out, err := exec.Command("powershell.exe", args...).CombinedOutput()
 		if err != nil {
 			t.Fatal(string(out), err)
+		}
+		service, e := manager.OpenService(serviceName)
+		if e != nil {
+			t.Fatal(e)
+		}
+		cfg, e := service.Config()
+		service.Close()
+		if e != nil {
+			t.Fatal(e)
+		}
+		want := "NT AUTHORITY\\LocalService"
+		if privileged {
+			want = "LocalSystem"
+		}
+		if !strings.EqualFold(cfg.ServiceStartName, want) {
+			t.Fatalf("service identity %q, want %q", cfg.ServiceStartName, want)
 		}
 	}, func() { control("start") }, func() { control("stop") })
 }

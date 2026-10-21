@@ -386,7 +386,7 @@ func correlate(ctx context.Context, tx *sql.Tx, n telemetry.Normalized) error {
 		}
 	}
 	if n.Class == "firewall" || n.Class == "fess" {
-		rows, err := tx.QueryContext(ctx, `SELECT payload FROM normalized_events WHERE class=? AND status='parsed' AND outcome='failure' AND agent_id=? AND source_ip=? AND json_extract(payload,'$.product')=? AND coalesce(json_extract(payload,'$.device'),'')=? AND coalesce(json_extract(payload,'$.destination_ip'),'')=? AND event_time>=? AND event_time<=? AND sequence<=? ORDER BY event_time DESC,sequence DESC LIMIT 100`, n.Class, n.AgentID, n.SourceIP, n.Product, n.Device, n.DestinationIP, stamp(n.EventTime.Add(-correlation.Window)), stamp(n.EventTime), n.Sequence)
+		rows, err := tx.QueryContext(ctx, `SELECT payload FROM normalized_events WHERE class=? AND status='parsed' AND ((?='syn' AND json_extract(payload,'$.action')='syn') OR (?<>'syn' AND outcome='failure')) AND agent_id=? AND source_ip=? AND json_extract(payload,'$.product')=? AND coalesce(json_extract(payload,'$.device'),'')=? AND coalesce(json_extract(payload,'$.destination_ip'),'')=? AND event_time>=? AND event_time<=? AND sequence<=? ORDER BY event_time DESC,sequence DESC LIMIT 100`, n.Class, n.Action, n.Action, n.AgentID, n.SourceIP, n.Product, n.Device, n.DestinationIP, stamp(n.EventTime.Add(-correlation.Window)), stamp(n.EventTime), n.Sequence)
 		if err != nil {
 			return err
 		}
