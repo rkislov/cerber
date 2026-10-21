@@ -61,6 +61,7 @@ const usage = `Cerber — прототип сканера на Go
   agent run -config ABSOLUTE_FILE
   agent service-run -config ABSOLUTE_FILE (Windows SCM only)
   agent run -asset LOCAL_ASSET_ID -credentials FILE -server HTTPS_ORIGIN [-interval 1h] [-ca-cert FILE] [-event-sources journald|windows:Security]
+  events receive-cef -listen 127.0.0.1:5514 -file /absolute/cef.log
   asset add -ip ADDRESS [-name NAME]
   asset list
   target add -name NAME -assets ID,ID
@@ -147,6 +148,12 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return knowledgeCommand(ctx, args[1:], out, errOut)
 	}
 	command := args[0] + " " + args[1]
+	if command == "events forward-cef" {
+		return forwardCEF(ctx, args[2:], errOut)
+	}
+	if command == "events receive-cef" {
+		return receiveCEF(ctx, args[2:], errOut)
+	}
 	if command == "siem admin-keygen" {
 		return adminKeygen(args[2:], out, errOut)
 	}
