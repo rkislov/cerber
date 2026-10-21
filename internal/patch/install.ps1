@@ -47,6 +47,7 @@ try {
  $info=New-Object -ComObject Microsoft.Update.SystemInfo
  if($info.RebootRequired){$reboot='yes'}
 }catch{
+ if($reboot -ne 'yes'){$reboot='unknown'}
  foreach($u in $q.updates){if(-not @($items | Where-Object {$_.id -eq $u.id}).Count){[void]$items.Add(@{id=[string]$u.id;status='failed';code='wua_unavailable'})}}
 }
 $good=@($items | Where-Object {$_.status -in @('ready','installed','already_installed')}).Count

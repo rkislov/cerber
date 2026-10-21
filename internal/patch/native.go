@@ -123,7 +123,7 @@ func (n Native) Execute(ctx context.Context, q Request) Result {
 			return unknownResult(q, "dnf_executor_failed_reconcile_history")
 		}
 		if q.Mode == "install" {
-			r.Reboot = n.linuxReboot(q)
+			r.Reboot = n.linuxReboot(q, r)
 		}
 		return r
 	}
@@ -227,7 +227,7 @@ func (n Native) Execute(ctx context.Context, q Request) Result {
 			}
 		}
 	}
-	r.Reboot = n.linuxReboot(q)
+	r.Reboot = n.linuxReboot(q, r)
 	return r
 }
 func unknownResult(q Request, code string) Result {
@@ -268,7 +268,7 @@ func aptPlanAllowed(data string, q Request) bool {
 	return inst == len(q.Updates)
 }
 
-func (n Native) linuxReboot(q Request) string {
+func (n Native) linuxReboot(q Request, r Result) string {
 	read := n.ReadFile
 	if read == nil {
 		read = os.ReadFile
@@ -277,6 +277,15 @@ func (n Native) linuxReboot(q Request) string {
 		return "yes"
 	}
 	for _, u := range q.Updates {
+		observed := false
+		for _, i := range r.Items {
+			if i.ID == u.ID && (i.Status == "installed" || i.Status == "already_installed") {
+				observed = true
+			}
+		}
+		if !observed {
+			continue
+		}
 		if u.Title == "kernel" || u.Title == "kernel-core" || u.Title == "kernel-default" || strings.HasPrefix(u.Title, "linux-image-") {
 			return "yes"
 		}
