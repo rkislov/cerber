@@ -18,10 +18,11 @@ import (
 )
 
 type bduVul struct {
-	ID          string `xml:"identifier"`
-	Name        string `xml:"name"`
-	Description string `xml:"description"`
-	State       string `xml:"vul_state"`
+	CWEs        []string `xml:"cwes>cwe>identifier"`
+	ID          string   `xml:"identifier"`
+	Name        string   `xml:"name"`
+	Description string   `xml:"description"`
+	State       string   `xml:"vul_state"`
 	Soft        []struct {
 		Name    string `xml:"name"`
 		Vendor  string `xml:"vendor"`
@@ -161,6 +162,11 @@ func (c *Catalog) ImportBDU(ctx context.Context, input io.Reader) error {
 			}
 			if score.Score < 0 || score.Score > 10 || math.IsNaN(score.Score) || math.IsInf(score.Score, 0) {
 				score = bduVector{}
+			}
+			for _, id := range item.CWEs {
+				if cweID.MatchString(id) {
+					r.CWEs = append(r.CWEs, id)
+				}
 			}
 			r.Score = score.Score
 			r.Vector = score.Text

@@ -277,3 +277,35 @@ func TestSourceRereadPreservesFirstObservation(t *testing.T) {
 		t.Fatal(v)
 	}
 }
+
+func TestHistoricalMITREAnnotationsDoNotRewriteEvidence(t *testing.T) {
+	ctx := context.Background()
+	s, e := Open(ctx, filepath.Join(t.TempDir(), "events.db"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	agent := telemetry.ID("mitre-agent")
+	b := batch(t, agent, 0, "audit")
+	if _, e = s.Accept(ctx, agent, "asset", b); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.Step(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.Step(ctx); e != nil {
+		t.Fatal(e)
+	}
+	ds, e := s.ReadDetections(ctx, 0, 100)
+	if e != nil || len(ds) != 1 || ds[0].Attack == nil || ds[0].Attack.Techniques[0].ID != "T1685.005" {
+		t.Fatal(ds, e)
+	}
+	ns, e := s.ReadEvents(ctx, telemetry.Query{Limit: 100})
+	if e != nil || len(ns) != 1 || ns[0].Attack == nil {
+		t.Fatal(ns, e)
+	}
+	var persisted any
+	if e = s.db.QueryRowContext(ctx, "SELECT json_extract(payload,'$.attack') FROM detections LIMIT 1").Scan(&persisted); e != nil || persisted != nil {
+		t.Fatal("read rewrote evidence", persisted, e)
+	}
+}

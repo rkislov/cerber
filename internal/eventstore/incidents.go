@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rkislov/cerber/internal/attack"
 	"github.com/rkislov/cerber/internal/incidents"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"strings"
@@ -260,6 +261,7 @@ func (s *Store) IncidentDetections(ctx context.Context, id string, before int64,
 			return nil, e
 		}
 		d.Sequence, d.State, d.AcknowledgedBy = seq, state, by
+		d.Attack = attack.RuleVersion(d.Rule, d.Version)
 		out = append(out, d)
 	}
 	return out, rows.Err()

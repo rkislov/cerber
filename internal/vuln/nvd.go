@@ -25,9 +25,14 @@ type nvdResponse struct {
 	Items []struct {
 		CVE struct {
 			Configurations []nvdNode `json:"configurations"`
-			ID             string    `json:"id"`
-			Status         string    `json:"vulnStatus"`
-			Descriptions   []struct {
+			Weaknesses     []struct {
+				Descriptions []struct {
+					Value string `json:"value"`
+				} `json:"description"`
+			} `json:"weaknesses"`
+			ID           string `json:"id"`
+			Status       string `json:"vulnStatus"`
+			Descriptions []struct {
 				Lang  string `json:"lang"`
 				Value string `json:"value"`
 			} `json:"descriptions"`
@@ -71,6 +76,15 @@ func parseNVD(data []byte, key string) ([]Record, int, error) {
 		}
 		r.ContextRequired = conditional
 		r.Applicability = basis
+		seenCWE := map[string]bool{}
+		for _, w := range v.Weaknesses {
+			for _, d := range w.Descriptions {
+				if cweID.MatchString(d.Value) && !seenCWE[d.Value] {
+					r.CWEs = append(r.CWEs, d.Value)
+					seenCWE[d.Value] = true
+				}
+			}
+		}
 		r.Title = v.ID
 		metrics := v.Metrics.V4
 		if len(metrics) == 0 {

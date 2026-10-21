@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/rkislov/cerber/internal/attack"
 	"github.com/rkislov/cerber/internal/health"
 	_ "modernc.org/sqlite"
 	"net/url"
@@ -19,6 +20,7 @@ import (
 )
 
 type Record struct {
+	CWEs            []string `json:"cwes,omitempty"`
 	ContextRequired bool     `json:"context_required,omitempty"`
 	Applicability   string   `json:"applicability,omitempty"`
 	ID              string   `json:"id"`
@@ -33,6 +35,7 @@ type Record struct {
 	CPEs            []string `json:"cpes"`
 }
 type Match struct {
+	Attack *attack.Assessment `json:"attack,omitempty"`
 	Record
 	Status   string    `json:"status"`
 	Evidence string    `json:"evidence"`
@@ -85,6 +88,7 @@ func Open(path string) (*Catalog, error) {
 }
 func (c *Catalog) Close() error { return c.db.Close() }
 
+var cweID = regexp.MustCompile(`^CWE-[0-9]{1,6}$`)
 var cveID = regexp.MustCompile(`^CVE-[0-9]{4}-[0-9]{4,10}$`)
 var bduID = regexp.MustCompile(`^BDU:[0-9]{4}-[0-9]{4,10}$`)
 
@@ -270,7 +274,7 @@ func (c *Catalog) Sync(ctx context.Context, cpes []string) {
 		}
 		seen[key] = true
 		old := c.cache(ctx, key)
-		if !force && (old.Format == 1 && time.Since(old.At) < 24*time.Hour || time.Since(old.Attempt) < 15*time.Minute) {
+		if !force && (old.Format == 2 && time.Since(old.At) < 24*time.Hour || time.Since(old.Attempt) < 15*time.Minute) {
 			continue
 		}
 		if n >= 100 {
@@ -285,7 +289,7 @@ func (c *Catalog) Sync(ctx context.Context, cpes []string) {
 			old.At = time.Now().UTC()
 			old.Error = ""
 			old.Records = records
-			old.Format = 1
+			old.Format = 2
 		}
 		b, _ := json.Marshal(old)
 		if _, err := c.db.ExecContext(ctx, "INSERT INTO products VALUES(?,?) ON CONFLICT(cpe) DO UPDATE SET payload=excluded.payload", key, string(b)); err != nil {

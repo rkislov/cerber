@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/rkislov/cerber/internal/attack"
 	"github.com/rkislov/cerber/internal/netscan"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"github.com/rkislov/cerber/internal/vuln"
@@ -361,6 +362,10 @@ func (s *Server) networkVulns(ctx context.Context, h netscan.Host) []vuln.Match 
 			seen[id] = len(out)
 			out = append(out, vuln.Match{Record: r, Status: "scanner_confirmed", Evidence: f.Script + ": " + f.Evidence, BDU: links})
 		}
+	}
+	for i := range out {
+		ids := append([]string{out[i].ID}, out[i].CVEs...)
+		out[i].Attack = attack.Vulnerability(ids, out[i].Vector, out[i].Status)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	return out
