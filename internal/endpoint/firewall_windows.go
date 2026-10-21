@@ -41,7 +41,7 @@ func firewall(ctx context.Context, b Block, add bool) error {
 	}
 
 	ip, e := netip.ParseAddr(b.IP)
-	if e != nil || !ip.IsGlobalUnicast() {
+	if e != nil || ip.Zone() != "" || !ip.IsGlobalUnicast() {
 		return ErrInvalid
 	}
 	script := fmt.Sprintf("$ErrorActionPreference='Stop';$a=New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\\netsh.exe') -Argument 'advfirewall firewall delete rule name=%s';$t=New-ScheduledTaskTrigger -Once -At ([datetimeoffset]::Parse('%s').LocalDateTime);Register-ScheduledTask -TaskName '%s' -Action $a -Trigger $t -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable) -User SYSTEM -RunLevel Highest -Force | Out-Null", name, b.Expires.Format("2006-01-02T15:04:05Z07:00"), name)

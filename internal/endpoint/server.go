@@ -154,7 +154,7 @@ func (s *Server) Command(ctx context.Context, c Command, actor string, protected
 			return ErrInvalid
 		}
 		ip = ip.Unmap()
-		if !ip.IsGlobalUnicast() || ip.IsLinkLocalUnicast() {
+		if ip.Zone() != "" || !ip.IsGlobalUnicast() || ip.IsLinkLocalUnicast() {
 			return ErrInvalid
 		}
 		var text string
@@ -335,7 +335,7 @@ func (s *Server) Observe(ctx context.Context, detections []telemetry.Detection) 
 			continue
 		}
 		ip, e := netip.ParseAddr(d.SourceIP)
-		if e != nil || !ip.IsGlobalUnicast() {
+		if e != nil || ip.Zone() != "" || !ip.IsGlobalUnicast() {
 			continue
 		}
 		blocked := false
