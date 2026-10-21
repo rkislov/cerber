@@ -188,7 +188,9 @@ func parseExport(b []byte, now time.Time) ([]IOC, error) {
 		if comment && !strings.Contains(line, "ioc_value") {
 			continue
 		}
-		row, e := csv.NewReader(strings.NewReader(line)).Read()
+		reader := csv.NewReader(strings.NewReader(line))
+		reader.TrimLeadingSpace = true
+		row, e := reader.Read()
 		if e != nil {
 			return nil, fmt.Errorf("ThreatFox malformed CSV")
 		}

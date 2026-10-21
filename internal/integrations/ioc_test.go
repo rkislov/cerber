@@ -27,7 +27,7 @@ func TestFullExportParsesOldIndicatorsAndHashes(t *testing.T) {
 	now := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
 	b := fixtureZIP(t, `# ThreatFox export
 # "first_seen_utc","ioc_id","ioc_value","ioc_type","last_seen_utc","confidence_level","malware_printable"
-"2026-07-01 00:00:00","1","192.0.2.20:443","ip:port","2026-10-01 00:00:00","90","fixture"
+"2026-07-01 00:00:00", "1", "192.0.2.20:443", "ip:port", "2026-10-01 00:00:00", "90", "fixture"
 "2026-07-01 00:00:00","2","abcd","md5_hash","","80","fixture"
 `)
 	items, e := parseExport(b, now)
