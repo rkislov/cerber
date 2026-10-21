@@ -104,3 +104,8 @@ Russian Trusted Root CA downloaded over verified HTTPS from the government
 certificate distribution service and its 2024 issuing certificate, whose signature
 was verified against that root. No global OS trust changes are needed. In a
 scratch image, copy that bundle into the image and pass the environment variable.
+
+When Nmap supplies an unversioned application CPE and a separate concrete service
+version, the version can complete that identity. Name-only fallback identities
+are restricted to reviewed OpenSSH and Apache HTTP Server aliases. Ambiguous
+versions containing distribution prose are not normalized into upstream versions.

@@ -75,3 +75,22 @@ func TestExpandedSafeScriptStructuredResult(t *testing.T) {
 		t.Fatal(h, e)
 	}
 }
+
+func TestServiceIdentityRequiresConcreteVersion(t *testing.T) {
+	s := Service{Product: "OpenSSH", Version: "9.6p1"}
+	if len(s.Identities()) != 1 {
+		t.Fatal(s.Identities())
+	}
+	s.Version = ""
+	if len(s.Identities()) != 0 {
+		t.Fatal("unknown version inferred")
+	}
+	s = Service{CPE: []string{"cpe:/a:apache:http_server"}, Version: "2.4.58"}
+	if len(s.Identities()) != 1 {
+		t.Fatal("CPE version not filled")
+	}
+	s.Version = "2.4.58 custom fix"
+	if len(s.Identities()) != 0 {
+		t.Fatal("ambiguous version accepted")
+	}
+}
