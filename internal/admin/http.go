@@ -26,6 +26,7 @@ import (
 var content embed.FS
 
 type Options struct {
+	Integrations  *integrations.Worker
 	System        func(context.Context) health.Report
 	Settings      *integrations.Store
 	PatchEnabled  bool
@@ -136,7 +137,7 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 			return
 		}
 		r = r.WithContext(WithPrincipal(r.Context(), session.User))
-		if integrationManagement(options.Settings, w, r, session.User, integrationSlots) {
+		if integrationManagement(options.Settings, w, r, session.User, integrationSlots, options.Integrations) {
 			return
 		}
 		if r.Method == "POST" && session.User.Role == "analyst" && !strings.HasPrefix(path, "/admin/api/incidents") && path != "/admin/api/detections" {

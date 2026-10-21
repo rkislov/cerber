@@ -13,6 +13,8 @@ import (
 )
 
 type Overview struct {
+	IPAddresses      int `json:"ip_addresses"`
+	Subnets          int `json:"subnets"`
 	Agents           int `json:"agents"`
 	Online           int `json:"online"`
 	Offline          int `json:"offline"`

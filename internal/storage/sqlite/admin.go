@@ -10,6 +10,7 @@ import (
 	"github.com/rkislov/cerber/internal/admin"
 	"github.com/rkislov/cerber/internal/alerts"
 	"github.com/rkislov/cerber/internal/domain"
+	"net/netip"
 	"time"
 )
 
@@ -20,7 +21,36 @@ func (s *Store) AdminOverview(ctx context.Context, now time.Time, p alerts.Polic
 		return v, err
 	}
 	err = s.db.QueryRowContext(ctx, "SELECT count(*),COALESCE(sum(acknowledged_at IS NULL),0) FROM alerts WHERE resolved_at IS NULL").Scan(&v.ActiveAlerts, &v.Unacknowledged)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	rows, e := s.db.QueryContext(ctx, "SELECT DISTINCT x.ip FROM agents a JOIN assets x ON x.id=a.asset_id WHERE NOT a.revoked")
+	if e != nil {
+		return v, e
+	}
+	defer rows.Close()
+	ips := map[string]bool{}
+	networks := map[string]bool{}
+	for rows.Next() {
+		var value string
+		if e = rows.Scan(&value); e != nil {
+			return v, e
+		}
+		ip, e := netip.ParseAddr(value)
+		if e != nil {
+			continue
+		}
+		ip = ip.Unmap()
+		ips[ip.String()] = true
+		bits := 64
+		if ip.Is4() {
+			bits = 24
+		}
+		networks[netip.PrefixFrom(ip, bits).Masked().String()] = true
+	}
+	v.IPAddresses = len(ips)
+	v.Subnets = len(networks)
+	return v, rows.Err()
 }
 func (s *Store) AdminInventory(ctx context.Context, id, section string, offset, limit int) (admin.InventoryPage, error) {
 	v := admin.InventoryPage{Section: section, Offset: offset, Items: []json.RawMessage{}}

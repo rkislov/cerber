@@ -199,6 +199,19 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			eventReader = eventDB
 			mux.Handle("/v1/agent/events", ingest.NewEventHandler(store, eventDB))
 		}
+		var integrationWorker *integrations.Worker
+		if integrationStore != nil {
+			var engine integrations.EventEngine
+			if eventDB != nil {
+				engine = eventDB
+			}
+			var err error
+			integrationWorker, err = integrations.OpenWorker(integrationStore, *settingsFile+".runtime.db", engine, store)
+			if err != nil {
+				return err
+			}
+			defer integrationWorker.Close()
+		}
 		var directory admin.Directory
 		if *directoryConfig != "" {
 			var err error
@@ -233,10 +246,13 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 				return err
 			}
 			probes := []health.Probe{store.Health}
+			if integrationWorker != nil {
+				probes = append(probes, integrationWorker.Health)
+			}
 			if eventDB != nil {
 				probes = append(probes, eventDB.Health)
 			}
-			handler, err := admin.NewHandler(store, token, admin.Options{System: health.New(filepath.Dir(store.Path()), probes...), Settings: integrationStore, PatchEnabled: *patchKey != "", SecureCookies: *cert != "" || *secureCookies, Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory, OIDC: identityProvider})
+			handler, err := admin.NewHandler(store, token, admin.Options{Integrations: integrationWorker, System: health.New(filepath.Dir(store.Path()), probes...), Settings: integrationStore, PatchEnabled: *patchKey != "", SecureCookies: *cert != "" || *secureCookies, Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory, OIDC: identityProvider})
 			if err != nil {
 				return err
 			}
@@ -255,6 +271,13 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			monitor.Run(monitorCtx, store, func(err error) { fmt.Fprintf(errOut, "alert monitor: %v\n", err) })
 			<-schedulerDone
 		}()
+		integrationDone := make(chan struct{})
+		go func() {
+			defer close(integrationDone)
+			if integrationWorker != nil {
+				integrationWorker.Run(monitorCtx)
+			}
+		}()
 		eventDone := make(chan struct{})
 		go func() {
 			defer close(eventDone)
@@ -262,7 +285,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 				eventDB.Run(monitorCtx, func(err error) { fmt.Fprintf(errOut, "event pipeline: %v\n", err) })
 			}
 		}()
-		defer func() { stop(); <-done; <-eventDone }()
+		defer func() { stop(); <-done; <-eventDone; <-integrationDone }()
 		return serveHTTP(ctx, mux, *listen, *cert, *key, "SIEM receiver", 2*time.Minute, 2*time.Minute, errOut)
 	case "siem enroll":
 		asset := f.String("asset", "", "server asset ID")
