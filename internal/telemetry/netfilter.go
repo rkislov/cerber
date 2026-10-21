@@ -18,6 +18,8 @@ func normalizeNetfilter(n *Normalized, transport, host, message string) bool {
 		{"[UFW BLOCK] ", "linux/ufw", "deny"},
 		{"[UFW REJECT] ", "linux/ufw", "deny"},
 		{"[UFW ALLOW] ", "linux/ufw", "allow"},
+		{"CERBER_IPT_SYN ", "linux/iptables", "syn"},
+		{"CERBER_NFT_SYN ", "linux/nftables", "syn"},
 		{"CERBER_IPT_DROP ", "linux/iptables", "deny"},
 		{"CERBER_NFT_DROP ", "linux/nftables", "deny"},
 		{"CERBER_IPT_ACCEPT ", "linux/iptables", "allow"},
@@ -50,10 +52,13 @@ func normalizeNetfilter(n *Normalized, transport, host, message string) bool {
 		n.Class = "unknown"
 		return true
 	}
-	n.Parser = "netfilter/1"
+	n.Parser = "netfilter/2"
 	n.Class = "firewall"
 	n.Action = action
-	n.Outcome = "failure"
+	n.Outcome = "unknown"
+	if action == "deny" {
+		n.Outcome = "failure"
+	}
 	if action == "allow" {
 		n.Outcome = "success"
 	}

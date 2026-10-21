@@ -2,7 +2,7 @@
 # Run elevated after provisioning agent.json, credentials and local asset DB.
 # Installs only into fixed Program Files / ProgramData directories; does not start.
 [CmdletBinding()]
-param([Parameter(Mandatory=$true)][string]$Binary)
+param([Parameter(Mandatory=$true)][string]$Binary, [switch]$Privileged)
 $ErrorActionPreference = 'Stop'
 $name = 'CerberAgent'
 $program = Join-Path $env:ProgramFiles 'Cerber'
@@ -45,7 +45,11 @@ $identity = New-Object Management.Automation.PSCredential('NT AUTHORITY\LocalSer
 $created = $false
 try {
     $command = '"'+$destination+'" agent service-run -config "'+$configPath+'"'
-    New-Service -Name $name -DisplayName 'Cerber Agent' -BinaryPathName $command -StartupType Manual -Credential $identity | Out-Null
+    if ($Privileged) {
+        New-Service -Name $name -DisplayName 'Cerber Agent' -BinaryPathName $command -StartupType Manual | Out-Null
+    } else {
+        New-Service -Name $name -DisplayName 'Cerber Agent' -BinaryPathName $command -StartupType Manual -Credential $identity | Out-Null
+    }
     $created = $true
     & sc.exe sidtype $name unrestricted | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Cannot enable service SID' }

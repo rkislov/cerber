@@ -86,7 +86,7 @@ jobs:
         run: |
           go test -c -o bin/cerber-service.test ./cmd/cerber
           cd cmd/cerber
-          sudo env CERBER_SERVICE_SMOKE=1 CERBER_SERVICE_BINARY="$GITHUB_WORKSPACE/bin/cerber" "$GITHUB_WORKSPACE/bin/cerber-service.test" -test.run '^TestSystemdServiceLifecycle$' -test.v -test.timeout 180s
+          sudo env CERBER_SERVICE_SMOKE=1 CERBER_SERVICE_BINARY="$GITHUB_WORKSPACE/bin/cerber" "$GITHUB_WORKSPACE/bin/cerber-service.test" -test.run '^TestSystemd(ServiceLifecycle|PrivilegedInstaller)$' -test.v -test.timeout 180s
       - name: Windows SCM lifecycle and durable queue
         if: runner.os == 'Windows'
         env:

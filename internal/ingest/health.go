@@ -12,6 +12,7 @@ const MaxHeartbeatBytes int64 = 4096
 // Heartbeat is ephemeral health, not inventory. Server receipt time determines
 // contact freshness; the agent clock never controls that decision.
 type Heartbeat struct {
+	Privilege        string                     `json:"privilege,omitempty"`
 	Events           *telemetry.CollectorHealth `json:"events,omitempty"`
 	SchemaVersion    int                        `json:"schema_version"`
 	AgentID          string                     `json:"agent_id"`
@@ -27,6 +28,11 @@ type Heartbeat struct {
 }
 
 func (h Heartbeat) Validate() error {
+	switch h.Privilege {
+	case "", "unknown", "unprivileged", "root", "system", "administrator":
+	default:
+		return fmt.Errorf("invalid process privilege")
+	}
 	if h.Events != nil {
 		if err := h.Events.Validate(); err != nil {
 			return err
@@ -68,7 +74,7 @@ func (h Heartbeat) QueueState() string {
 
 // TransitionKey excludes counters/timestamps to avoid a durable event per heartbeat.
 func (h Heartbeat) TransitionKey() string {
-	key := h.CollectionStatus + ":" + h.DeliveryStatus + ":" + h.QueueState()
+	key := h.Privilege + ":" + h.CollectionStatus + ":" + h.DeliveryStatus + ":" + h.QueueState()
 	if h.Events != nil {
 		key += ":" + h.Events.Key()
 	}

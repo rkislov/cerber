@@ -10,7 +10,18 @@ func Network(n telemetry.Normalized, previous []telemetry.Normalized) *telemetry
 		return nil
 	}
 	rule, title, severity := "", "", "medium"
-	if n.Class == "firewall" && n.Action == "deny" && len(previous) >= 20 {
+	if n.Class == "firewall" && n.Action == "syn" && n.DestinationIP != "" {
+		ports := map[int]bool{}
+		for _, p := range previous {
+			if p.DestinationPort > 0 {
+				ports[p.DestinationPort] = true
+			}
+		}
+		if len(ports) < 20 {
+			return nil
+		}
+		rule, title = "firewall.syn_scan", "TCP SYN на множество портов"
+	} else if n.Class == "firewall" && n.Action == "deny" && len(previous) >= 20 {
 		rule, title = "firewall.denied_burst", "Серия блокировок межсетевым экраном"
 		ports := map[int]bool{}
 		for _, p := range previous {
@@ -50,6 +61,7 @@ func Network(n telemetry.Normalized, previous []telemetry.Normalized) *telemetry
 func NetworkCatalog() []RuleDescription {
 	out := []RuleDescription{}
 	for _, v := range []struct{ id, title, condition string }{
+		{"firewall.syn_scan", "TCP SYN на множество портов", "Наблюдались SYN на 20 различных портов одного IP за 5 минут; это не подтверждает блокировку или успешное соединение"},
 		{"firewall.denied_burst", "Серия блокировок межсетевым экраном", "20 отказов за 5 минут"},
 		{"firewall.port_scan", "Вероятное сканирование портов", "Отказы на 20 различных портов одного адреса за 5 минут"},
 		{"fess.blocked_burst", "Серия блокировок FESS WAF", "10 блокировок за 5 минут"},

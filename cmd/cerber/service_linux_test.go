@@ -9,10 +9,14 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
-func TestSystemdServiceLifecycle(t *testing.T) {
+func TestSystemdServiceLifecycle(t *testing.T)    { systemdServiceLifecycle(t, false) }
+func TestSystemdPrivilegedInstaller(t *testing.T) { systemdServiceLifecycle(t, true) }
+func systemdServiceLifecycle(t *testing.T, privileged bool) {
 	if os.Getenv("CERBER_SERVICE_SMOKE") != "1" {
 		t.Skip("explicit root CI smoke only")
 	}
@@ -21,7 +25,7 @@ func TestSystemdServiceLifecycle(t *testing.T) {
 	}
 	binary := os.Getenv("CERBER_SERVICE_BINARY")
 	const unit = "/etc/systemd/system/cerber-agent.service"
-	paths := []string{"/etc/cerber", "/var/lib/cerber", "/opt/cerber", unit}
+	paths := []string{"/etc/cerber", "/var/lib/cerber", "/opt/cerber", unit, "/etc/systemd/system/cerber-agent.service.d", "/etc/sudoers.d/cerber-agent", "/etc/systemd/system/multi-user.target.wants/cerber-agent.service"}
 	for _, p := range paths {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Fatalf("managed path already exists: %s", p)
@@ -58,6 +62,10 @@ func TestSystemdServiceLifecycle(t *testing.T) {
 	uid, _ := strconv.Atoi(account.Uid)
 	gid, _ := strconv.Atoi(account.Gid)
 	serviceFixture(t, "/etc/cerber", "/etc/cerber", "/var/lib/cerber", func() {
+		if privileged {
+			command("sh", "../../deploy/linux/Install-CerberAgent.sh", "--binary", binary, "--config", "/etc/cerber/agent.json", "--privileged")
+			return
+		}
 		command("install", "-d", "-m", "0755", "/opt/cerber")
 		command("install", "-m", "0755", binary, "/opt/cerber/cerber")
 		command("install", "-m", "0644", "../../deploy/linux/cerber-agent.service", unit)
@@ -89,5 +97,27 @@ func TestSystemdServiceLifecycle(t *testing.T) {
 	}, func() {
 		command("systemctl", "start", "cerber-agent")
 		command("systemctl", "is-active", "--quiet", "cerber-agent")
+		waitFor(t, 5*time.Second, func() bool {
+			output, e := exec.Command("systemctl", "show", "cerber-agent", "-p", "MainPID", "--value").Output()
+			if e != nil {
+				return false
+			}
+			p := strings.TrimSpace(string(output))
+			status, e := os.ReadFile("/proc/" + p + "/status")
+			if e != nil {
+				return false
+			}
+			for _, line := range strings.Split(string(status), "\n") {
+				if strings.HasPrefix(line, "Uid:") {
+					f := strings.Fields(line)
+					want := account.Uid
+					if privileged {
+						want = "0"
+					}
+					return len(f) > 2 && f[2] == want
+				}
+			}
+			return false
+		}, "service did not run with expected effective UID")
 	}, func() { command("systemctl", "stop", "cerber-agent") })
 }

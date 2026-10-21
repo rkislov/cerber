@@ -69,7 +69,7 @@ func (h *Health) Snapshot(id string) ingest.Heartbeat {
 		copy := h.events.Clone()
 		events = &copy
 	}
-	return ingest.Heartbeat{Events: events, SchemaVersion: 1, AgentID: id, ObservedAt: time.Now().UTC(), Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectionStatus: collection, DeliveryStatus: delivery, LastCollectionAt: at}
+	return ingest.Heartbeat{Privilege: Privilege(), Events: events, SchemaVersion: 1, AgentID: id, ObservedAt: time.Now().UTC(), Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectionStatus: collection, DeliveryStatus: delivery, LastCollectionAt: at}
 }
 
 type HealthQueue interface {
