@@ -12,6 +12,7 @@ import (
 	"github.com/rkislov/cerber/internal/telemetry"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -122,4 +123,47 @@ func TestFileIOCScanReadOnlyAndSymlinks(t *testing.T) {
 
 func scanRootsForTest(ctx context.Context, root string, iocs []integrations.IOC) scanResult {
 	return scanWithRoots(ctx, testPolicy("off"), iocs, "", []string{root}, nil)
+}
+
+type fakeExchange struct {
+	reply  Signed
+	report Report
+	fail   bool
+}
+
+func (f *fakeExchange) EndpointExchange(_ context.Context, r Report) (Signed, error) {
+	f.report = r
+	if f.fail {
+		return Signed{}, ErrInvalid
+	}
+	return f.reply, nil
+}
+func TestOfflineCancellationAcknowledgmentSurvivesUntilExchange(t *testing.T) {
+	pub, key, _ := ed25519.GenerateKey(rand.Reader)
+	now := time.Now().UTC()
+	p := testPolicy("confirm")
+	p.ID = "test"
+	p.Version = 1
+	b := Bundle{Agent: "agent", Issued: now, Expires: now.Add(time.Hour), Policy: p, Blocks: []Block{}}
+	signed, _ := Sign(b, key)
+	old := Block{ID: strings.Repeat("a", 32), Agent: "agent", IP: "198.51.100.10", Expires: now.Add(5 * time.Minute)}
+	removed := false
+	l := &Local{path: filepath.Join(t.TempDir(), "state.json"), key: pub, agent: "agent", apply: func(_ context.Context, _ Block, add bool) error {
+		if !add {
+			removed = true
+		}
+		return nil
+	}, state: localState{Signed: signed, Blocks: []Block{old}, NextSync: now.Add(time.Hour)}}
+	client := &fakeExchange{reply: signed, fail: true}
+	if e := l.Step(context.Background(), client); e != nil || !removed || l.state.Report.Blocks[old.ID] != "removed" {
+		t.Fatal("offline rollback not retained", e, l.state.Report)
+	}
+	l.state.NextSync = time.Time{}
+	if e := l.Step(context.Background(), client); e == nil || l.state.Report.Blocks[old.ID] != "removed" {
+		t.Fatal("failed transport lost acknowledgment")
+	}
+	client.fail = false
+	if e := l.Step(context.Background(), client); e != nil || client.report.Blocks[old.ID] != "removed" {
+		t.Fatal("rollback not reported", e, client.report)
+	}
 }
