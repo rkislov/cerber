@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=Cerber signed managed update executor
+Wants=network-online.target
+After=network-online.target
+[Service]
+Type=simple
+User=root
+Group=cerber
+UMask=0027
+ExecStart=/opt/cerber/cerber patch executor -config /etc/cerber-patch/executor.json
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=120
+KillMode=control-group
+NoNewPrivileges=true
+ProtectHome=true
+StandardOutput=journal
+StandardError=journal
+[Install]
+WantedBy=multi-user.target

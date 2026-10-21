@@ -20,11 +20,13 @@ import (
 	"github.com/rkislov/cerber/internal/ingest"
 	"github.com/rkislov/cerber/internal/inventory"
 	"github.com/rkislov/cerber/internal/jobs"
+	"github.com/rkislov/cerber/internal/patch"
 	"github.com/rkislov/cerber/internal/storage/sqlite"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -124,6 +126,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 	case "siem user-add":
 		return adminUserAdd(ctx, store, args[2:], out, errOut)
 	case "siem serve":
+		patchKey := f.String("patch-key", "", "Ed25519 private signing key for managed updates (opt-in)")
 		eventsDB := f.String("events-db", "", "separate security event journal database; disabled if omitted")
 		oidcConfig := f.String("oidc-config", "", "optional OpenID Connect configuration JSON")
 		directoryConfig := f.String("directory-config", "", "optional LDAPS configuration JSON")
@@ -149,6 +152,13 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		monitor := &alerts.Monitor{Policy: policy, Interval: *checkEvery}
 		mux := http.NewServeMux()
 		mux.Handle("/v1/agent/", ingest.NewHandler(store))
+		if *patchKey != "" {
+			k, e := patch.Private(*patchKey)
+			if e != nil {
+				return e
+			}
+			mux.Handle("/v1/agent/patches/", ingest.NewPatchHandler(store, k))
+		}
 		var eventDB *eventstore.Store
 		var eventReader admin.EventStore
 		if *eventsDB != "" {
@@ -197,7 +207,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			if err != nil {
 				return err
 			}
-			handler, err := admin.NewHandler(store, token, admin.Options{SecureCookies: *cert != "", Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory, OIDC: identityProvider})
+			handler, err := admin.NewHandler(store, token, admin.Options{PatchEnabled: *patchKey != "", SecureCookies: *cert != "", Policy: policy, Monitor: monitor.Snapshot, JobMonitor: jobMonitor.Snapshot, Events: eventReader, Directory: directory, OIDC: identityProvider})
 			if err != nil {
 				return err
 			}
@@ -271,6 +281,8 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		}
 		return json.NewEncoder(out).Encode(map[string]string{"revoked": *id})
 	}
+	patchInbox := f.String("patch-inbox", "", "opt-in signed patch request directory")
+	patchOutbox := f.String("patch-outbox", "", "read-only executor results directory")
 	credentials := f.String("credentials", "", "agent credentials JSON file")
 	server := f.String("server", "", "SIEM HTTPS origin (required for flush/run)")
 	ca := f.String("ca-cert", "", "additional trusted CA PEM")
@@ -303,6 +315,8 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			allowed["event-sources"] = true
 			allowed["interval"] = true
 			allowed["heartbeat-interval"] = true
+			allowed["patch-inbox"] = true
+			allowed["patch-outbox"] = true
 		}
 	}
 	var invalid string
@@ -469,6 +483,14 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		}
 	}()
 	defer func() { stopEvents(); <-eventDone }()
+	if (*patchInbox == "") != (*patchOutbox == "") {
+		return fmt.Errorf("both patch spool paths required")
+	}
+	if *patchInbox != "" {
+		if !filepath.IsAbs(*patchInbox) || !filepath.IsAbs(*patchOutbox) || *patchInbox == *patchOutbox {
+			return fmt.Errorf("separate absolute patch spool paths required")
+		}
+	}
 	worker := agent.Worker{Store: store, Client: client, AgentID: c.AgentID, Execute: func(jobCtx context.Context, job jobs.Job) jobs.Result {
 		fail := func(code string) jobs.Result { return jobs.Result{JobID: job.ID, Status: "failed", Code: code} }
 		count, size, e := store.QueueUsage(jobCtx)
@@ -510,6 +532,11 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			fmt.Fprintf(errOut, "agent delivery: %v\n", deliveryErr)
 		} else if n > 0 {
 			fmt.Fprintf(errOut, "agent delivered %d report(s)\n", n)
+		}
+		if *patchInbox != "" {
+			if e := agent.PatchStep(ctx, client, *patchInbox, *patchOutbox); e != nil && ctx.Err() == nil {
+				fmt.Fprintf(errOut, "agent patches: %v\n", e)
+			}
 		}
 		if err := worker.Step(ctx); err != nil && ctx.Err() == nil {
 			fmt.Fprintf(errOut, "agent job: %v\n", err)

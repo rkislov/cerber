@@ -24,7 +24,7 @@ func (s *Store) AdminOverview(ctx context.Context, now time.Time, p alerts.Polic
 }
 func (s *Store) AdminInventory(ctx context.Context, id, section string, offset, limit int) (admin.InventoryPage, error) {
 	v := admin.InventoryPage{Section: section, Offset: offset, Items: []json.RawMessage{}}
-	if section != "components" && section != "updates" || offset < 0 || offset > 100000 || limit < 1 || limit > 100 {
+	if section != "components" && section != "updates" && section != "updates_available" || offset < 0 || offset > 100000 || limit < 1 || limit > 100 {
 		return v, fmt.Errorf("invalid inventory pagination")
 	}
 	var at, osData, coverage string
@@ -54,7 +54,15 @@ func (s *Store) AdminInventory(ctx context.Context, id, section string, offset, 
 	if section == "updates" {
 		v.Total = v.Summary.UpdateCount
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT e.value FROM inventories i,json_each(i.payload,?) e WHERE i.id=? ORDER BY CAST(e.key AS INTEGER) LIMIT ? OFFSET ?`, "$."+section, id, limit, offset)
+	array := section
+	available := section == "updates_available"
+	if available {
+		array = "updates"
+		if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM inventories i,json_each(i.payload,'$.updates') e WHERE i.id=? AND json_extract(e.value,'$.state')='available'`, id).Scan(&v.Total); err != nil {
+			return v, err
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT e.value FROM inventories i,json_each(i.payload,?) e WHERE i.id=? AND (?=0 OR json_extract(e.value,'$.state')='available') ORDER BY CAST(e.key AS INTEGER) LIMIT ? OFFSET ?`, "$."+array, id, available, limit, offset)
 	if err != nil {
 		return v, err
 	}

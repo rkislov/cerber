@@ -23,6 +23,7 @@ import (
 var content embed.FS
 
 type Options struct {
+	PatchEnabled  bool
 	Events        EventStore
 	Directory     Directory
 	OIDC          *OIDC
@@ -55,13 +56,13 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'")
 		path := r.URL.Path
-		if r.Method == "GET" && (path == "/admin" || path == "/admin/" || path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/app.css" || path == "/admin/icon.svg") {
+		if r.Method == "GET" && (path == "/admin" || path == "/admin/" || path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" || path == "/admin/app.css" || path == "/admin/icon.svg") {
 			name := "index.html"
 			if path == "/admin/icon.svg" {
 				name = "icon.svg"
 				w.Header().Set("Content-Type", "image/svg+xml")
 			}
-			if path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" {
+			if path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" {
 				name = strings.TrimPrefix(path, "/admin/")
 				w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			} else if path == "/admin/app.css" {
@@ -138,6 +139,9 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 		}
 		if strings.HasPrefix(path, "/admin/api/users") && session.User.Role != "administrator" {
 			http.Error(w, "forbidden", 403)
+			return
+		}
+		if patchManagement(store, w, r, options.PatchEnabled) {
 			return
 		}
 		if incidentManagement(store, options.Events, w, r, session.User) {
@@ -260,7 +264,7 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 			id := r.URL.Query().Get("id")
 			section := defaultString(r.URL.Query().Get("section"), "components")
 			offset, err := integer(r, "offset", 0, 0, 100000)
-			if err != nil || len(id) < 1 || len(id) > 256 || section != "components" && section != "updates" {
+			if err != nil || len(id) < 1 || len(id) > 256 || section != "components" && section != "updates" && section != "updates_available" {
 				http.Error(w, "invalid inventory query", 400)
 				return
 			}

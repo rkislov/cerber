@@ -105,3 +105,6 @@ func runPowerShell(ctx context.Context, source string) ([]byte, error) {
 	}
 	return out.Bytes(), nil
 }
+
+// RunScript runs a product-owned constant script; callers must never supply external script source.
+func RunScript(ctx context.Context, source string) ([]byte, error) { return runPowerShell(ctx, source) }

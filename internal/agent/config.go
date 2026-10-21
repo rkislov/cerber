@@ -17,6 +17,8 @@ import (
 // Config contains deployment settings, never the bearer token itself. All paths
 // are absolute so SCM/systemd working directories cannot redirect state or secrets.
 type Config struct {
+	PatchInbox             string `json:"patch_inbox,omitempty"`
+	PatchOutbox            string `json:"patch_outbox,omitempty"`
 	EventSources           string `json:"event_sources,omitempty"`
 	HeartbeatInterval      string `json:"heartbeat_interval,omitempty"`
 	SchemaVersion          int    `json:"schema_version"`
@@ -74,6 +76,17 @@ func LoadConfig(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if (c.PatchInbox == "") != (c.PatchOutbox == "") {
+		return fmt.Errorf("both patch spool paths are required")
+	}
+	for _, p := range []string{c.PatchInbox, c.PatchOutbox} {
+		if p != "" && (strings.HasPrefix(p, `\\`) || strings.ContainsAny(p, "\r\n\x00")) {
+			return fmt.Errorf("patch spool requires local paths")
+		}
+	}
+	if c.PatchInbox != "" && (!filepath.IsAbs(c.PatchInbox) || !filepath.IsAbs(c.PatchOutbox) || c.PatchInbox == c.PatchOutbox) {
+		return fmt.Errorf("separate absolute patch spool directories required")
+	}
 	if c.EventSources != "" {
 		seen := map[string]bool{}
 		for _, source := range strings.Split(c.EventSources, ",") {
@@ -149,6 +162,9 @@ func (c Config) Args() []string {
 	args := []string{"-db", c.Database, "agent", "run", "-asset", c.AssetID, "-credentials", c.Credentials, "-server", c.Server, "-interval", c.Interval}
 	if c.HeartbeatInterval != "" {
 		args = append(args, "-heartbeat-interval", c.HeartbeatInterval)
+	}
+	if c.PatchInbox != "" {
+		args = append(args, "-patch-inbox", c.PatchInbox, "-patch-outbox", c.PatchOutbox)
 	}
 	if c.CACert != "" {
 		args = append(args, "-ca-cert", c.CACert)
