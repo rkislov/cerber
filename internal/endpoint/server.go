@@ -244,6 +244,9 @@ func (s *Server) Exchange(ctx context.Context, agent, asset string, report Repor
 	if len(report.Findings) > 100 || len(report.Blocks) > 100 || len(report.Error) > 2000 {
 		return Signed{}, ErrInvalid
 	}
+	if len(report.Findings) > 0 && s.events == nil {
+		return Signed{}, fmt.Errorf("event storage required for file findings")
+	}
 	if len(report.Findings) > 0 && s.events != nil {
 		batch := telemetry.Batch{SchemaVersion: 1, AgentID: agent}
 		for _, f := range report.Findings {
