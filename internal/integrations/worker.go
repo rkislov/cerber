@@ -101,7 +101,7 @@ func (w *Worker) Status(ctx context.Context) WorkerStatus {
 			if strings.HasPrefix(k, "ip_observed:") {
 				ips[strings.TrimPrefix(k, "ip_observed:")] = true
 			}
-			if strings.HasPrefix(k, "ip:") {
+			if strings.HasPrefix(k, "ip:") && !strings.HasPrefix(k, "ip:port:") {
 				ips[strings.TrimPrefix(k, "ip:")] = true
 			}
 			if strings.HasPrefix(k, "ip:port:") {
