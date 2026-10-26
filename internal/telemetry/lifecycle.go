@@ -4,6 +4,7 @@ package telemetry
 import "time"
 
 type RetentionPolicy struct {
+	MaxBytes    int64 `json:"max_bytes,omitempty"`
 	Enabled     bool  `json:"enabled"`
 	HotDays     int   `json:"hot_days"`
 	ArchiveDays int   `json:"archive_days"`
@@ -11,6 +12,9 @@ type RetentionPolicy struct {
 }
 
 func (p RetentionPolicy) Validate() error {
+	if p.MaxBytes != 0 && (p.MaxBytes < 64<<20 || p.MaxBytes > 1<<40) {
+		return ErrInvalid
+	}
 	if p.Version < 1 || p.HotDays < 1 || p.HotDays > 3650 || p.ArchiveDays < 0 || p.ArchiveDays > 36500 {
 		return ErrInvalid
 	}
@@ -55,4 +59,10 @@ type ArchiveRecord struct {
 	ReceivedAt    time.Time  `json:"received_at"`
 	Raw           Raw        `json:"raw"`
 	Normalized    Normalized `json:"normalized"`
+}
+
+type ArchiveCheck struct {
+	Archive  Archive  `json:"archive"`
+	Verified bool     `json:"verified"`
+	EventIDs []string `json:"event_ids"`
 }

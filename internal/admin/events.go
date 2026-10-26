@@ -23,6 +23,26 @@ type EventStore interface {
 }
 
 func eventManagement(store EventStore, w http.ResponseWriter, r *http.Request, user User) bool {
+	if r.URL.Path == "/admin/api/event-health" {
+		if r.Method != "GET" {
+			http.Error(w, "method not allowed", 405)
+			return true
+		}
+		s, ok := store.(interface {
+			PipelineHealth(context.Context) (telemetry.PipelineHealth, error)
+		})
+		if !ok {
+			writeJSON(w, map[string]any{"enabled": false})
+			return true
+		}
+		v, e := s.PipelineHealth(r.Context())
+		if e != nil {
+			http.Error(w, "pipeline monitor unavailable", 503)
+		} else {
+			writeJSON(w, map[string]any{"enabled": true, "health": v})
+		}
+		return true
+	}
 	if r.URL.Path == "/admin/api/mitre" {
 		if r.Method != "GET" {
 			http.Error(w, "method not allowed", 405)
