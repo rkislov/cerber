@@ -27,12 +27,13 @@ type EventSink interface {
 	Accept(context.Context, string, string, telemetry.Batch) (telemetry.Receipt, error)
 }
 type Server struct {
-	Catalog *vuln.Catalog
-	db      *sql.DB
-	key     ed25519.PrivateKey
-	feed    Feed
-	events  EventSink
-	mu      sync.Mutex
+	Inventory vuln.InventorySource
+	Catalog   *vuln.Catalog
+	db        *sql.DB
+	key       ed25519.PrivateKey
+	feed      Feed
+	events    EventSink
+	mu        sync.Mutex
 }
 type Command struct {
 	Action  string `json:"action"`
@@ -56,7 +57,7 @@ func Open(path string, key ed25519.PrivateKey, feed Feed, events EventSink) (*Se
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	_, e = db.Exec(`PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS policies(id TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS assignments(agent TEXT PRIMARY KEY,policy TEXT NOT NULL);CREATE TABLE IF NOT EXISTS blocks(id TEXT PRIMARY KEY,agent TEXT NOT NULL,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS reports(agent TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS audit(sequence INTEGER PRIMARY KEY AUTOINCREMENT,at TEXT NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,payload TEXT NOT NULL);`)
+	_, e = db.Exec(`PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS package_assessment_targets(asset_key TEXT NOT NULL,finding TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(asset_key,finding));CREATE TABLE IF NOT EXISTS package_assessment_history(sequence INTEGER PRIMARY KEY AUTOINCREMENT,asset_key TEXT NOT NULL,finding TEXT NOT NULL,fingerprint TEXT NOT NULL,payload TEXT NOT NULL);CREATE INDEX IF NOT EXISTS package_history_key ON package_assessment_history(asset_key,finding,sequence);CREATE TABLE IF NOT EXISTS policies(id TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS assignments(agent TEXT PRIMARY KEY,policy TEXT NOT NULL);CREATE TABLE IF NOT EXISTS blocks(id TEXT PRIMARY KEY,agent TEXT NOT NULL,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS reports(agent TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS audit(sequence INTEGER PRIMARY KEY AUTOINCREMENT,at TEXT NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,payload TEXT NOT NULL);`)
 	if e != nil {
 		db.Close()
 		return nil, e

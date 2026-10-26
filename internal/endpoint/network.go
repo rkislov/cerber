@@ -10,6 +10,7 @@ import (
 	"github.com/rkislov/cerber/internal/netscan"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"github.com/rkislov/cerber/internal/vuln"
+	"log"
 	"reflect"
 	"sort"
 	"time"
@@ -64,6 +65,7 @@ func (s *Server) NetworkView(ctx context.Context) (NetworkView, error) {
 		for i := range v.Assets {
 			h := &v.Assets[i].Host
 			h.Vulnerabilities = s.networkVulns(ctx, *h)
+			s.assessHost(ctx, h)
 		}
 	}
 	return v, nil
@@ -383,6 +385,9 @@ func (s *Server) RunNetworkCatalog(ctx context.Context) {
 				}
 			}
 			s.Catalog.Sync(ctx, cpes)
+			if e := s.syncPackageAssessments(ctx, v); e != nil && ctx.Err() == nil {
+				log.Printf("package assessment persistence: %v", e)
+			}
 		}
 		timer := time.NewTimer(time.Minute)
 		select {

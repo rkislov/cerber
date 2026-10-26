@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const dpkgFormat = "${Package}\t${Version}\t${Architecture}\t${Status}\n"
+const dpkgFormat = "${Package}\t${Version}\t${Architecture}\t${Status}\t${source:Package}\t${source:Version}\n"
 const rpmFormat = "%{NAME}\t%{EPOCH}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\n"
 
 type packageIndex struct {
@@ -54,15 +54,21 @@ func parsePackages(data, scheme string) ([]inventory.Component, packageIndex, er
 			continue
 		}
 		fields := strings.Split(line, "\t")
-		var name, arch, version string
+		var name, arch, version, sourcePackage, sourceVersion string
 		if scheme == "debian" {
-			if len(fields) != 4 {
+			if len(fields) != 4 && len(fields) != 6 {
 				return nil, index, fmt.Errorf("malformed dpkg-query record")
 			}
 			if fields[3] != "install ok installed" && fields[3] != "hold ok installed" {
 				continue
 			}
 			name, version, arch = fields[0], fields[1], fields[2]
+			if len(fields) == 6 {
+				sourcePackage, sourceVersion = fields[4], fields[5]
+				if !packageText(sourcePackage) || sourceVersion == "" || len(sourceVersion) > 512 {
+					return nil, index, fmt.Errorf("invalid source package metadata")
+				}
+			}
 		} else {
 			if len(fields) != 5 {
 				return nil, index, fmt.Errorf("malformed rpm query record")
@@ -88,7 +94,7 @@ func parsePackages(data, scheme string) ([]inventory.Component, packageIndex, er
 			return nil, index, fmt.Errorf("multiple Debian versions for one installed package")
 		}
 		versions[id][version] = true
-		index.ByID[id] = inventory.Component{ID: id, Kind: "package", Name: name, Architecture: arch, Source: map[string]string{"debian": "dpkg-query", "rpm": "rpm-query"}[scheme], VersionScheme: scheme, ProductKey: name + ":" + arch, State: "installed"}
+		index.ByID[id] = inventory.Component{ID: id, Kind: "package", Name: name, Architecture: arch, Source: map[string]string{"debian": "dpkg-query", "rpm": "rpm-query"}[scheme], SourcePackage: sourcePackage, SourceVersion: sourceVersion, VersionScheme: scheme, ProductKey: name + ":" + arch, State: "installed"}
 	}
 	if err := scan.Err(); err != nil {
 		return nil, index, err
