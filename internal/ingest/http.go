@@ -187,7 +187,7 @@ func NewClient(origin string, c Credentials, caPEM []byte) (*Client, error) {
 		}
 		transport.TLSClientConfig.RootCAs = roots
 	}
-	return &Client{origin: strings.TrimRight(origin, "/"), credentials: c, http: &http.Client{Transport: transport, Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	return &Client{origin: strings.TrimRight(origin, "/"), credentials: c, http: &http.Client{Transport: &agentTransport{base: transport}, Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 func (c *Client) Send(ctx context.Context, report Report) (Receipt, error) {
