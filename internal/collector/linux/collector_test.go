@@ -132,3 +132,21 @@ func TestNativeLinuxInventory(t *testing.T) {
 		t.Fatalf("native cached update query failed: %+v", s.Coverage)
 	}
 }
+
+func TestALTOSReleaseBranchProvenance(t *testing.T) {
+	c := Collector{ReadFile: func(string) ([]byte, error) {
+		return []byte("ID=altlinux\nNAME=ALT\nVERSION_ID=11.4\nCPE_NAME=cpe:/o:alt:kworkstation:11\nALT_BRANCH_ID=p11\n"), nil
+	}, Lookup: func(n string) (string, error) { return n, nil }, Runner: func(ctx context.Context, n string, args ...string) (Result, error) {
+		if n == "uname" {
+			return Result{Stdout: "x86_64"}, nil
+		}
+		if n == "rpm" {
+			return Result{Stdout: "openssh-server\t(none)\t9.6p1\talt2\tx86_64\n"}, nil
+		}
+		return Result{}, nil
+	}}
+	s, e := c.Collect(context.Background())
+	if e != nil || s.OS.CPEName != "cpe:/o:alt:kworkstation:11" || s.OS.BranchID != "p11" || s.PackageManager != "apt-rpm" {
+		t.Fatal(s, e)
+	}
+}

@@ -19,6 +19,8 @@ type Coverage struct {
 	Detail  string `json:"detail,omitempty"`
 }
 type OS struct {
+	CPEName        string   `json:"cpe_name,omitempty"`
+	BranchID       string   `json:"branch_id,omitempty"`
 	DistributionID string   `json:"distribution_id,omitempty"`
 	IDLike         []string `json:"id_like,omitempty"`
 	Codename       string   `json:"codename,omitempty"`
@@ -134,7 +136,7 @@ func (s Snapshot) Validate() error {
 	if s.CoverageStatus("os") == "complete" && (!text(s.OS.Name, 512) || !text(s.OS.Version, 256) || !text(s.OS.Architecture, 64)) {
 		return fmt.Errorf("complete OS section requires name, version and architecture")
 	}
-	if len(s.PackageManager) > 64 || len(s.RepositoryMetadata) > 64 || len(s.OS.DistributionID) > 256 || len(s.OS.Codename) > 256 || len(s.OS.Kernel) > 512 || len(s.OS.IDLike) > 32 {
+	if len(s.PackageManager) > 64 || len(s.RepositoryMetadata) > 64 || len(s.OS.CPEName) > 512 || len(s.OS.BranchID) > 64 || len(s.OS.DistributionID) > 256 || len(s.OS.Codename) > 256 || len(s.OS.Kernel) > 512 || len(s.OS.IDLike) > 32 {
 		return fmt.Errorf("excessive Linux metadata")
 	}
 	for _, v := range s.OS.IDLike {

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,15 +54,16 @@ type Cache struct {
 	Records []Record  `json:"records"`
 }
 type Status struct {
-	UbuntuRecords int      `json:"ubuntu_records"`
-	UbuntuErrors  int      `json:"ubuntu_errors"`
-	BDU           Cache    `json:"bdu"`
-	BDUCount      int      `json:"bdu_count"`
-	Products      int      `json:"products"`
-	Errors        int      `json:"errors"`
-	Pending       bool     `json:"pending"`
-	Busy          bool     `json:"busy"`
-	ProductErrors []string `json:"product_errors"`
+	OVALSources   []OVALSourceStatus `json:"oval_sources"`
+	UbuntuRecords int                `json:"ubuntu_records"`
+	UbuntuErrors  int                `json:"ubuntu_errors"`
+	BDU           Cache              `json:"bdu"`
+	BDUCount      int                `json:"bdu_count"`
+	Products      int                `json:"products"`
+	Errors        int                `json:"errors"`
+	Pending       bool               `json:"pending"`
+	Busy          bool               `json:"busy"`
+	ProductErrors []string           `json:"product_errors"`
 }
 type Catalog struct {
 	db          *sql.DB
@@ -70,6 +72,8 @@ type Catalog struct {
 	force       atomic.Bool
 	ubuntuForce atomic.Bool
 	ubuntuBusy  atomic.Bool
+	ovalBusy    atomic.Bool
+	ovalForce   atomic.Bool
 	path        string
 }
 
@@ -84,7 +88,7 @@ func Open(path string) (*Catalog, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(4)
-	_, e = db.Exec(`PRAGMA journal_mode=WAL;PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS ubuntu_osv(cve TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS products(cpe TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS bdu(id TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS bdu_cve(cve TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(cve,id));CREATE TABLE IF NOT EXISTS bdu_cpe(cpe TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(cpe,id));CREATE TABLE IF NOT EXISTS bdu_software(product TEXT NOT NULL,version TEXT NOT NULL,id TEXT NOT NULL);CREATE INDEX IF NOT EXISTS bdu_software_product ON bdu_software(product);CREATE TABLE IF NOT EXISTS metadata(id TEXT PRIMARY KEY,payload TEXT NOT NULL);`)
+	_, e = db.Exec(`PRAGMA journal_mode=WAL;PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS vendor_oval_sources(id TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS vendor_oval_records(source TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(source,id));CREATE TABLE IF NOT EXISTS ubuntu_osv(cve TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS products(cpe TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS bdu(id TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS bdu_cve(cve TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(cve,id));CREATE TABLE IF NOT EXISTS bdu_cpe(cpe TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(cpe,id));CREATE TABLE IF NOT EXISTS bdu_software(product TEXT NOT NULL,version TEXT NOT NULL,id TEXT NOT NULL);CREATE INDEX IF NOT EXISTS bdu_software_product ON bdu_software(product);CREATE TABLE IF NOT EXISTS metadata(id TEXT PRIMARY KEY,payload TEXT NOT NULL);`)
 	if e != nil {
 		db.Close()
 		return nil, e
@@ -169,11 +173,18 @@ func (c *Catalog) Status(ctx context.Context) Status {
 	}
 	c.db.QueryRowContext(ctx, "SELECT count(*) FROM ubuntu_osv WHERE json_extract(payload,'$.at')>'2000'").Scan(&s.UbuntuRecords)
 	c.db.QueryRowContext(ctx, "SELECT count(*) FROM ubuntu_osv WHERE json_extract(payload,'$.error')<>''").Scan(&s.UbuntuErrors)
-	s.Pending = c.force.Load() || c.ubuntuForce.Load()
-	s.Busy = c.busy.Load() || c.ubuntuBusy.Load()
+	s.Pending = c.force.Load() || c.ubuntuForce.Load() || c.ovalForce.Load()
+	s.Busy = c.busy.Load() || c.ubuntuBusy.Load() || c.ovalBusy.Load()
+	for id := range ovalSources {
+		v := c.ovalStatus(ctx, id)
+		if v.ID != "" {
+			s.OVALSources = append(s.OVALSources, v)
+		}
+	}
+	sort.Slice(s.OVALSources, func(i, j int) bool { return s.OVALSources[i].ID < s.OVALSources[j].ID })
 	return s
 }
-func (c *Catalog) Request() { c.force.Store(true); c.ubuntuForce.Store(true) }
+func (c *Catalog) Request() { c.force.Store(true); c.ubuntuForce.Store(true); c.ovalForce.Store(true) }
 func (c *Catalog) Lookup(ctx context.Context, raw string) []Match {
 	key := CPE(raw)
 	if key == "" {
