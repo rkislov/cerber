@@ -329,19 +329,23 @@ func TestRunDrainsBacklogWithoutIdleDelayBetweenBatches(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	done := make(chan struct{})
-	go func() { defer close(done); s.Run(ctx, func(e error) { t.Errorf("worker: %v", e) }) }()
-	defer func() { cancel(); <-done }()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	for cycle := 0; cycle < 10; cycle++ {
+		delay, e := s.stepAndDelay(ctx)
+		if e != nil {
+			t.Fatal(e)
+		}
 		var pos int64
-		if err = s.db.QueryRowContext(ctx, "select position from consumer_cursors where name='correlator/1'").Scan(&pos); err != nil {
-			t.Fatal(err)
+		if e = s.db.QueryRowContext(ctx, "SELECT position FROM consumer_cursors WHERE name='correlator/1'").Scan(&pos); e != nil {
+			t.Fatal(e)
 		}
-		if pos == 1000 {
-			return
+		if pos != int64((cycle+1)*100) {
+			t.Fatal("work no longer bounded to one batch", pos)
 		}
-		time.Sleep(10 * time.Millisecond)
+		if cycle < 9 && delay >= time.Second {
+			t.Fatal("idle polling used with backlog", delay)
+		}
+		if cycle == 9 && delay != time.Second {
+			t.Fatal("empty queue must return to idle polling", delay)
+		}
 	}
-	t.Fatal("backlog processing retained the one-second idle delay")
 }
