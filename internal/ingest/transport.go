@@ -13,14 +13,20 @@ import (
 // by their owner; the transport never replays a request itself.
 type agentTransport struct {
 	base     http.RoundTripper
-	mu       sync.Mutex
+	once     sync.Once
+	gate     chan struct{}
 	next     time.Time
 	cooldown time.Duration
 }
 
 func (t *agentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.once.Do(func() { t.gate = make(chan struct{}, 1) })
+	select {
+	case t.gate <- struct{}{}:
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	}
+	defer func() { <-t.gate }()
 	if wait := time.Until(t.next); wait > 0 {
 		timer := time.NewTimer(wait)
 		defer timer.Stop()
