@@ -231,6 +231,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			if e != nil {
 				return e
 			}
+			responseServer.Inventory = store
 			defer responseServer.Close()
 			mux.Handle("/v1/agent/endpoint", responseServer.Handler(store))
 		}

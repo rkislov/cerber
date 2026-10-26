@@ -9,7 +9,7 @@ import (
 )
 
 func endpointManagement(server *endpoint.Server, store Store, w http.ResponseWriter, r *http.Request, u User) bool {
-	if r.URL.Path == "/admin/api/network" {
+	if r.URL.Path == "/admin/api/network" || r.URL.Path == "/admin/api/network-assessments" {
 		return networkManagement(server, store, w, r, u)
 	}
 	if r.URL.Path != "/admin/api/endpoint" {
@@ -93,6 +93,19 @@ func endpointManagement(server *endpoint.Server, store Store, w http.ResponseWri
 func networkManagement(server *endpoint.Server, store Store, w http.ResponseWriter, r *http.Request, u User) bool {
 	if server == nil {
 		http.Error(w, "endpoint signing not configured", 503)
+		return true
+	}
+	if r.Method == "GET" && r.URL.Path == "/admin/api/network-assessments" {
+		v, e := server.AssessmentHistory(r.Context(), r.URL.Query().Get("asset"), r.URL.Query().Get("finding"))
+		if e != nil {
+			storageError(w, e)
+		} else {
+			writeJSON(w, map[string]any{"items": v})
+		}
+		return true
+	}
+	if r.URL.Path == "/admin/api/network-assessments" {
+		http.Error(w, "method not allowed", 405)
 		return true
 	}
 	if r.Method == "GET" {

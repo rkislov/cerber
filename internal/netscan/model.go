@@ -123,11 +123,12 @@ type Finding struct {
 	Evidence string `json:"evidence"`
 }
 type Host struct {
-	Vulnerabilities []vuln.Match `json:"vulnerabilities,omitempty"`
-	IP              string       `json:"ip"`
-	Name            string       `json:"name"`
-	Services        []Service    `json:"services"`
-	Findings        []Finding    `json:"findings"`
+	Inventory       *vuln.InventoryLink `json:"inventory,omitempty"`
+	Vulnerabilities []vuln.Match        `json:"vulnerabilities,omitempty"`
+	IP              string              `json:"ip"`
+	Name            string              `json:"name"`
+	Services        []Service           `json:"services"`
+	Findings        []Finding           `json:"findings"`
 }
 type Result struct {
 	ID       string    `json:"id"`

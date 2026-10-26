@@ -31,6 +31,8 @@ type OS struct {
 	Architecture   string   `json:"architecture"`
 }
 type Component struct {
+	SourcePackage     string   `json:"source_package,omitempty"`
+	SourceVersion     string   `json:"source_version,omitempty"`
 	VersionScheme     string   `json:"version_scheme,omitempty"`
 	InstalledVersions []string `json:"installed_versions,omitempty"`
 	State             string   `json:"state,omitempty"`
@@ -142,7 +144,7 @@ func (s Snapshot) Validate() error {
 	}
 	ids := map[string]bool{}
 	for _, c := range s.Components {
-		if section(c.Kind) == "" || !text(c.ID, 2048) || !text(c.Name, 1024) || !text(c.Source, 256) || len(c.Version) > 512 || len(c.ProductKey) > 2048 || len(c.Publisher) > 1024 || len(c.Architecture) > 64 || len(c.State) > 64 {
+		if section(c.Kind) == "" || !text(c.ID, 2048) || !text(c.Name, 1024) || !text(c.Source, 256) || len(c.Version) > 512 || len(c.SourcePackage) > 256 || len(c.SourceVersion) > 512 || len(c.ProductKey) > 2048 || len(c.Publisher) > 1024 || len(c.Architecture) > 64 || len(c.State) > 64 {
 			return fmt.Errorf("invalid component")
 		}
 		if err := validateVersions(c.VersionScheme, c.InstalledVersions); err != nil {
