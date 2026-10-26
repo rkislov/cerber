@@ -448,3 +448,12 @@ License: Creative Commons Attribution-ShareAlike 4.0 International (CC-BY-SA-4.0
 https://creativecommons.org/licenses/by-sa/4.0/
 The server retains source URL, modification/fetch times and SHA-256; package
 assessments are derived by Cerber and do not imply Canonical endorsement.
+
+Runtime OVAL data (downloaded separately; not bundled with code):
+RED SOFT / RED OS: https://redos.red-soft.ru/support/secure/
+Astra Linux: https://dl.astralinux.ru/astra/oval/
+ALT Linux Errata System, copyright BaseALT Ltd:
+https://rdb.altlinux.org/api/errata/export/oval/p10
+https://rdb.altlinux.org/api/errata/export/oval/p11
+Vendor rights remain with their owners. Cerber retains origin URL, timestamps,
+SHA-256 and definition identities; derived assessments do not imply endorsement.

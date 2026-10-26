@@ -77,6 +77,8 @@ func (c Collector) Collect(ctx context.Context) (inventory.Snapshot, error) {
 		s.OS.Name = "Linux"
 	}
 	s.OS.DistributionID = values["ID"]
+	s.OS.CPEName = values["CPE_NAME"]
+	s.OS.BranchID = values["ALT_BRANCH_ID"]
 	s.OS.IDLike = strings.Fields(values["ID_LIKE"])
 	s.OS.Codename = values["VERSION_CODENAME"]
 	s.OS.Version = values["VERSION_ID"]

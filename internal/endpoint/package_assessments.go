@@ -33,7 +33,7 @@ func (s *Server) assessHost(ctx context.Context, h *netscan.Host) {
 	binding := s.networkBinding(ctx, h.IP)
 	h.Inventory = &binding.Link
 	for i := range h.Vulnerabilities {
-		a := s.Catalog.AssessUbuntu(ctx, h.Vulnerabilities[i], binding, time.Now().UTC())
+		a := s.Catalog.AssessPackage(ctx, h.Vulnerabilities[i], binding, time.Now().UTC())
 		h.Vulnerabilities[i].Verification = &a
 	}
 }
@@ -113,13 +113,18 @@ func (s *Server) syncPackageAssessments(ctx context.Context, v NetworkView) erro
 		}
 	}
 	s.Catalog.SyncUbuntu(ctx, ids)
+	bindings := []vuln.InventoryBinding{}
+	for _, h := range hosts {
+		bindings = append(bindings, s.networkBinding(ctx, h.Host.IP))
+	}
+	s.Catalog.SyncOVAL(ctx, bindings)
 	for key, matches := range targets {
 		binding := s.networkBinding(ctx, hosts[key].Host.IP)
 		for _, m := range matches {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			a := s.Catalog.AssessUbuntu(ctx, m, binding, time.Now().UTC())
+			a := s.Catalog.AssessPackage(ctx, m, binding, time.Now().UTC())
 			if e := s.saveAssessment(ctx, key, m, a); e != nil {
 				return e
 			}

@@ -67,6 +67,8 @@ type PackageEvidence struct {
 	Status        string `json:"status"`
 }
 type PackageAssessment struct {
+	SourceName     string            `json:"source_name,omitempty"`
+	Definitions    []string          `json:"definitions,omitempty"`
 	Status         string            `json:"status"`
 	Reason         string            `json:"reason"`
 	AgentID        string            `json:"agent_id,omitempty"`
