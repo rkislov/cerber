@@ -450,10 +450,24 @@ func (s *Store) Run(ctx context.Context, onError func(error)) {
 	defer func() { <-maintenanceDone }()
 
 	for {
-		if e := s.Step(ctx); e != nil && ctx.Err() == nil {
-			onError(e)
+		delay := time.Second
+		if e := s.Step(ctx); e != nil {
+			if ctx.Err() == nil {
+				onError(e)
+			}
+		} else {
+			// Each Step still commits at most 100 records per stage. Yield
+			// briefly while catching up; reserve idle polling for an empty queue.
+			var pending bool
+			err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM raw_events WHERE sequence>(SELECT position FROM consumer_cursors WHERE name='normalizer/1')) OR EXISTS(SELECT 1 FROM normalized_events WHERE sequence>(SELECT position FROM consumer_cursors WHERE name='correlator/1'))`).Scan(&pending)
+			if err == nil && pending {
+				delay = 10 * time.Millisecond
+			}
+			if err != nil && ctx.Err() == nil {
+				onError(err)
+			}
 		}
-		t := time.NewTimer(time.Second)
+		t := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			t.Stop()
