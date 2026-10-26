@@ -40,3 +40,23 @@ func TestAgentGatewayBackpressure(t *testing.T) {
 		t.Fatal("caller headers mutated")
 	}
 }
+
+func TestGatewayQueueWaitCanBeCanceled(t *testing.T) {
+	tr := &agentTransport{}
+	tr.once.Do(func() { tr.gate = make(chan struct{}, 1) })
+	tr.gate <- struct{}{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://example.test/v1/agent/jobs/claim", nil)
+	done := make(chan error, 1)
+	go func() { _, err := tr.RoundTrip(req); done <- err }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation blocked behind another request")
+	}
+	<-tr.gate
+}
