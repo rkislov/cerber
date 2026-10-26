@@ -482,22 +482,9 @@ func (s *Store) Run(ctx context.Context, onError func(error)) {
 	defer func() { <-maintenanceDone }()
 
 	for {
-		delay := time.Second
-		if e := s.Step(ctx); e != nil {
-			if ctx.Err() == nil {
-				onError(e)
-			}
-		} else {
-			// Each Step still commits at most 100 records per stage. Yield
-			// briefly while catching up; reserve idle polling for an empty queue.
-			var pending bool
-			err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM raw_events WHERE sequence>(SELECT position FROM consumer_cursors WHERE name='normalizer/1')) OR EXISTS(SELECT 1 FROM normalized_events WHERE sequence>(SELECT position FROM consumer_cursors WHERE name='correlator/1'))`).Scan(&pending)
-			if err == nil && pending {
-				delay = 10 * time.Millisecond
-			}
-			if err != nil && ctx.Err() == nil {
-				onError(err)
-			}
+		delay, err := s.stepAndDelay(ctx)
+		if err != nil && ctx.Err() == nil {
+			onError(err)
 		}
 		t := time.NewTimer(delay)
 		select {
@@ -507,6 +494,23 @@ func (s *Store) Run(ctx context.Context, onError func(error)) {
 		case <-t.C:
 		}
 	}
+}
+
+// stepAndDelay keeps work bounded and makes idle/backlog scheduling independent
+// of the wall-clock speed of SQLite or the host running the service.
+func (s *Store) stepAndDelay(ctx context.Context) (time.Duration, error) {
+	if e := s.Step(ctx); e != nil {
+		return time.Second, e
+	}
+	var pending bool
+	e := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM raw_events WHERE sequence>(SELECT position FROM consumer_cursors WHERE name='normalizer/1')) OR EXISTS(SELECT 1 FROM normalized_events WHERE sequence>(SELECT position FROM consumer_cursors WHERE name='correlator/1'))`).Scan(&pending)
+	if e != nil {
+		return time.Second, e
+	}
+	if pending {
+		return 10 * time.Millisecond, nil
+	}
+	return time.Second, nil
 }
 
 // JSON field order is not part of a native event's identity. UseNumber preserves
