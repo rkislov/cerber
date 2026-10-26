@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS alerts (
  id TEXT NOT NULL UNIQUE,
  agent_id TEXT NOT NULL REFERENCES agents(id),
  asset_id TEXT NOT NULL REFERENCES assets(id),
- kind TEXT NOT NULL CHECK(kind IN ('agent_offline','inventory_stale')),
+ kind TEXT NOT NULL CHECK(kind IN ('agent_offline','inventory_stale','event_delivery_stalled','event_queue_growing','event_health_stale')),
  severity TEXT NOT NULL,
  raised_at TEXT NOT NULL,
  resolved_at TEXT,

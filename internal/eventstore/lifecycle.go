@@ -53,7 +53,7 @@ func (s *Store) archiveRoot() string {
 }
 func retentionPolicy(ctx context.Context, q rowQuery) (telemetry.RetentionPolicy, error) {
 	var p telemetry.RetentionPolicy
-	e := q.QueryRowContext(ctx, "SELECT enabled,hot_days,archive_days,version FROM event_retention WHERE id=1").Scan(&p.Enabled, &p.HotDays, &p.ArchiveDays, &p.Version)
+	e := q.QueryRowContext(ctx, "SELECT enabled,hot_days,archive_days,version,max_bytes FROM event_retention WHERE id=1").Scan(&p.Enabled, &p.HotDays, &p.ArchiveDays, &p.Version, &p.MaxBytes)
 	return p, e
 }
 
@@ -72,7 +72,7 @@ func lifecycleAudit(ctx context.Context, tx *sql.Tx, actor, action string, detai
 func (s *Store) RetentionStatus(ctx context.Context) (telemetry.RetentionStatus, error) {
 	var v telemetry.RetentionStatus
 	var at sql.NullString
-	e := s.db.QueryRowContext(ctx, `SELECT enabled,hot_days,archive_days,version,last_success_at,last_error,(SELECT count(*) FROM raw_events WHERE id IN (`+evidenceIDs+`)),(SELECT raw_bytes FROM journal_usage WHERE id=1),(SELECT count(*) FROM event_archives WHERE state IN ('active','expiring')) FROM event_retention WHERE id=1`).Scan(&v.Policy.Enabled, &v.Policy.HotDays, &v.Policy.ArchiveDays, &v.Policy.Version, &at, &v.LastError, &v.ProtectedEvents, &v.QuotaBytes, &v.Archives)
+	e := s.db.QueryRowContext(ctx, `SELECT enabled,hot_days,archive_days,version,last_success_at,last_error,(SELECT count(*) FROM raw_events WHERE id IN (`+evidenceIDs+`)),(SELECT raw_bytes FROM journal_usage WHERE id=1),(SELECT count(*) FROM event_archives WHERE state IN ('active','expiring')),max_bytes FROM event_retention WHERE id=1`).Scan(&v.Policy.Enabled, &v.Policy.HotDays, &v.Policy.ArchiveDays, &v.Policy.Version, &at, &v.LastError, &v.ProtectedEvents, &v.QuotaBytes, &v.Archives, &v.Policy.MaxBytes)
 	v.ArchiveConfigured = s.archiveRoot() != ""
 	if at.Valid {
 		t, e2 := parseTime(at.String)
@@ -105,7 +105,17 @@ func (s *Store) SetRetention(ctx context.Context, p telemetry.RetentionPolicy, a
 	if prior.Version != p.Version {
 		return telemetry.ErrConflict
 	}
-	_, e = tx.ExecContext(ctx, "UPDATE event_retention SET enabled=?,hot_days=?,archive_days=?,version=version+1 WHERE id=1", p.Enabled, p.HotDays, p.ArchiveDays)
+	if p.MaxBytes == 0 {
+		p.MaxBytes = prior.MaxBytes
+	}
+	var used int64
+	if e = tx.QueryRowContext(ctx, "SELECT raw_bytes FROM journal_usage WHERE id=1").Scan(&used); e != nil {
+		return e
+	}
+	if p.MaxBytes < used {
+		return telemetry.ErrInvalid
+	}
+	_, e = tx.ExecContext(ctx, "UPDATE event_retention SET enabled=?,hot_days=?,archive_days=?,max_bytes=?,version=version+1 WHERE id=1", p.Enabled, p.HotDays, p.ArchiveDays, p.MaxBytes)
 	if e != nil {
 		return e
 	}
@@ -551,4 +561,48 @@ func (s *Store) MaintainRequested(ctx context.Context, actor string, now time.Ti
 		return 0, e
 	}
 	return s.Maintain(ctx, now)
+}
+
+// VerifyArchive reads the entire gzip stream (including its CRC), validates
+// record count/provenance, and returns IDs for read-only historical recovery.
+func (s *Store) VerifyArchive(ctx context.Context, id string) (telemetry.ArchiveCheck, error) {
+	data, a, e := s.ReadArchive(ctx, id)
+	v := telemetry.ArchiveCheck{Archive: a, EventIDs: []string{}}
+	if e != nil {
+		return v, e
+	}
+	z, e := gzip.NewReader(bytes.NewReader(data))
+	if e != nil {
+		return v, e
+	}
+	defer z.Close()
+	reader := io.LimitReader(z, (64<<20)+1)
+	decoder := json.NewDecoder(reader)
+	var first, last int64
+	for {
+		if e = ctx.Err(); e != nil {
+			return v, e
+		}
+		var r telemetry.ArchiveRecord
+		e = decoder.Decode(&r)
+		if e == io.EOF {
+			break
+		}
+		if e != nil {
+			return v, e
+		}
+		if len(v.EventIDs) >= 250 || r.SchemaVersion != 1 || !telemetry.Identifier(r.ID) || r.Sequence <= last {
+			return v, fmt.Errorf("invalid archive record")
+		}
+		if first == 0 {
+			first = r.Sequence
+		}
+		last = r.Sequence
+		v.EventIDs = append(v.EventIDs, r.ID)
+	}
+	if len(v.EventIDs) != a.Records || first != a.FirstSequence || last != a.LastSequence {
+		return v, fmt.Errorf("archive metadata mismatch")
+	}
+	v.Verified = true
+	return v, nil
 }

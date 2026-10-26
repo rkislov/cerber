@@ -244,6 +244,16 @@ func (w *Worker) enqueue(ctx context.Context, name string, source NotificationSo
 	}
 	return tx.Commit()
 }
+
+type healthNotificationSource struct {
+	engine interface {
+		HealthNotificationBatch(context.Context, int64) ([]Notification, error)
+	}
+}
+
+func (s healthNotificationSource) NotificationBatch(ctx context.Context, after int64) ([]Notification, error) {
+	return s.engine.HealthNotificationBatch(ctx, after)
+}
 func (w *Worker) mail(ctx context.Context) {
 	m := w.settings.snapshot().SMTP
 	if !m.Enabled {
@@ -252,6 +262,13 @@ func (w *Worker) mail(ctx context.Context) {
 	e := w.enqueue(ctx, "alerts", w.control)
 	if e == nil && w.events != nil {
 		e = w.enqueue(ctx, "detections", w.events)
+	}
+	if e == nil {
+		if h, ok := w.events.(interface {
+			HealthNotificationBatch(context.Context, int64) ([]Notification, error)
+		}); ok {
+			e = w.enqueue(ctx, "pipeline-health", healthNotificationSource{h})
+		}
 	}
 	if e == nil {
 		for i := 0; i < 10; i++ {

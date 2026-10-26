@@ -28,11 +28,14 @@ var incidentsSchema string
 var lifecycleSchema string
 
 type Store struct {
-	path            string
-	db              *sql.DB
-	lifecycleMu     sync.Mutex
-	archiveDir      string
-	archiveConfigMu sync.RWMutex
+	healthMu                               sync.Mutex
+	lastHealth                             telemetry.PipelineHealth
+	lastHealthOrdinal, lastHealthProcessed int64
+	path                                   string
+	db                                     *sql.DB
+	lifecycleMu                            sync.Mutex
+	archiveDir                             string
+	archiveConfigMu                        sync.RWMutex
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -59,7 +62,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		}
 	}
 	var version int
-	if e = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); e != nil || version > 3 {
+	if e = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); e != nil || version > 4 {
 		db.Close()
 		return nil, fmt.Errorf("unsupported event database version: %d: %v", version, e)
 	}
@@ -90,6 +93,13 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	}
 	if version < 3 {
 		if _, e = db.ExecContext(ctx, "BEGIN;"+lifecycleSchema+"PRAGMA user_version=3;COMMIT;"); e != nil {
+			db.ExecContext(ctx, "ROLLBACK")
+			db.Close()
+			return nil, e
+		}
+	}
+	if version < 4 {
+		if _, e = db.ExecContext(ctx, `BEGIN;ALTER TABLE event_retention ADD COLUMN max_bytes INTEGER NOT NULL DEFAULT 1073741824;CREATE TABLE IF NOT EXISTS pipeline_health_alerts(id TEXT PRIMARY KEY,kind TEXT NOT NULL,severity TEXT NOT NULL,detail TEXT NOT NULL,raised_at TEXT NOT NULL,resolved_at TEXT);CREATE UNIQUE INDEX IF NOT EXISTS pipeline_health_active ON pipeline_health_alerts(kind) WHERE resolved_at IS NULL;CREATE TABLE IF NOT EXISTS pipeline_health_notifications(sequence INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL,subject TEXT NOT NULL,body TEXT NOT NULL);PRAGMA user_version=4;COMMIT;`); e != nil {
 			db.ExecContext(ctx, "ROLLBACK")
 			db.Close()
 			return nil, e
@@ -149,6 +159,10 @@ func (s *Store) Accept(ctx context.Context, agent, asset string, b telemetry.Bat
 	if e = tx.QueryRowContext(ctx, "SELECT raw_bytes FROM journal_usage WHERE id=1").Scan(&rawBytes); e != nil {
 		return receipt, e
 	}
+	var maxBytes int64
+	if e = tx.QueryRowContext(ctx, "SELECT max_bytes FROM event_retention WHERE id=1").Scan(&maxBytes); e != nil {
+		return receipt, e
+	}
 	initialBytes := rawBytes
 	for _, r := range b.Records {
 		id := telemetry.ID(agent, r.ID)
@@ -183,7 +197,7 @@ func (s *Store) Accept(ctx context.Context, agent, asset string, b telemetry.Bat
 			return receipt, e
 		}
 		rawBytes += int64(len(p))
-		if rawBytes > 1<<30 {
+		if rawBytes > maxBytes {
 			return receipt, telemetry.ErrFull
 		}
 		if _, e = tx.ExecContext(ctx, "INSERT INTO raw_events(id,agent_id,asset_id,source,cursor,received_at,payload) VALUES(?,?,?,?,?,?,?)", id, agent, asset, r.Source, r.Cursor, stamp(now), string(p)); e != nil {
@@ -193,7 +207,7 @@ func (s *Store) Accept(ctx context.Context, agent, asset string, b telemetry.Bat
 	receipt = telemetry.Receipt{BatchID: b.ID, AgentID: agent, Count: len(b.Records), ReceivedAt: now}
 	p, _ := json.Marshal(receipt)
 	rawBytes += int64(len(p)) + 256
-	if rawBytes > 1<<30 {
+	if rawBytes > maxBytes {
 		return receipt, telemetry.ErrFull
 	}
 	if _, e = tx.ExecContext(ctx, "UPDATE journal_usage SET raw_bytes=raw_bytes+? WHERE id=1", rawBytes-initialBytes); e != nil {
@@ -431,6 +445,24 @@ func correlate(ctx context.Context, tx *sql.Tx, n telemetry.Normalized) error {
 	return e
 }
 func (s *Store) Run(ctx context.Context, onError func(error)) {
+	healthDone := make(chan struct{})
+	go func() {
+		defer close(healthDone)
+		for {
+			if e := s.SamplePipelineHealth(ctx, time.Now().UTC()); e != nil && ctx.Err() == nil {
+				onError(e)
+			}
+			timer := time.NewTimer(30 * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}()
+	defer func() { <-healthDone }()
+
 	maintenanceDone := make(chan struct{})
 	go func() {
 		defer close(maintenanceDone)

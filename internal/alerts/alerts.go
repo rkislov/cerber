@@ -37,7 +37,20 @@ type Alert struct {
 	AcknowledgedBy string     `json:"acknowledged_by,omitempty"`
 	Evidence       Evidence   `json:"evidence"`
 }
+
+var Kinds = []string{"agent_offline", "inventory_stale", "event_delivery_stalled", "event_queue_growing", "event_health_stale"}
+
+func Title(kind string) string {
+	if v, ok := map[string]string{"agent_offline": "Нет связи с агентом", "inventory_stale": "Устаревший инвентарь", "event_delivery_stalled": "Задержка доставки событий", "event_queue_growing": "Растёт очередь событий", "event_health_stale": "Устарело состояние сбора событий"}[kind]; ok {
+		return v
+	}
+	return kind
+}
+
 type Evidence struct {
+	QueueBatches     int64     `json:"queue_batches,omitempty"`
+	QueueBytes       int64     `json:"queue_bytes,omitempty"`
+	Detail           string    `json:"detail,omitempty"`
 	ReferenceAt      time.Time `json:"reference_at"`
 	ThresholdSeconds int64     `json:"threshold_seconds"`
 	Missing          bool      `json:"missing"`
@@ -54,7 +67,7 @@ func Conditions(s ingest.AgentStatus, now time.Time, p Policy) map[string]Eviden
 		seen = *s.LastSeenAt
 	}
 	if now.Sub(seen) > p.OfflineAfter {
-		values["agent_offline"] = Evidence{seen, int64(p.OfflineAfter / time.Second), missing}
+		values["agent_offline"] = Evidence{ReferenceAt: seen, ThresholdSeconds: int64(p.OfflineAfter / time.Second), Missing: missing}
 	}
 	at := s.CreatedAt
 	missing = s.LatestInventoryAt == nil || s.LatestInventoryID == ""
@@ -62,7 +75,7 @@ func Conditions(s ingest.AgentStatus, now time.Time, p Policy) map[string]Eviden
 		at = *s.LatestInventoryAt
 	}
 	if now.Sub(at) > p.InventoryMaxAge {
-		values["inventory_stale"] = Evidence{at, int64(p.InventoryMaxAge / time.Second), missing}
+		values["inventory_stale"] = Evidence{ReferenceAt: at, ThresholdSeconds: int64(p.InventoryMaxAge / time.Second), Missing: missing}
 	}
 	return values
 }

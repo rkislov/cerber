@@ -55,7 +55,10 @@ func (s *Store) evaluateAlertPage(ctx context.Context, now time.Time, policy ale
 	}
 	for _, agent := range agents {
 		conditions := alerts.Conditions(agent, now, policy)
-		for _, kind := range []string{"agent_offline", "inventory_stale"} {
+		if err = eventDeliveryConditions(ctx, tx, agent, now, conditions); err != nil {
+			return page, err
+		}
+		for _, kind := range alerts.Kinds {
 			var id string
 			err = tx.QueryRowContext(ctx, "SELECT id FROM alerts WHERE agent_id=? AND kind=? AND resolved_at IS NULL", agent.AgentID, kind).Scan(&id)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {

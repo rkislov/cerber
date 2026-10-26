@@ -22,6 +22,9 @@ import (
 func TestSearchAndRetentionHTTPPermissionsDownloadsAndExpiry(t *testing.T) {
 	ctx := context.Background()
 	events, _, batch := oldJournal(t)
+	if e := events.SamplePipelineHealth(ctx, time.Now().UTC()); e != nil {
+		t.Fatal(e)
+	}
 	control, e := sqlite.Open(ctx, ":memory:")
 	if e != nil {
 		t.Fatal(e)
@@ -60,6 +63,9 @@ func TestSearchAndRetentionHTTPPermissionsDownloadsAndExpiry(t *testing.T) {
 	if code, _, _ := call("GET", "api/security-events", nil, nil, ""); code != 401 {
 		t.Fatal("anonymous search", code)
 	}
+	if code, _, _ := call("GET", "api/event-health", nil, nil, ""); code != 401 {
+		t.Fatal("anonymous health", code)
+	}
 	var root, viewer *http.Cookie
 	var rootCSRF string
 	policy := map[string]any{"action": "configure", "confirm": true, "policy": telemetry.RetentionPolicy{Enabled: true, HotDays: 1, ArchiveDays: 2, Version: 2}}
@@ -78,6 +84,9 @@ func TestSearchAndRetentionHTTPPermissionsDownloadsAndExpiry(t *testing.T) {
 		json.Unmarshal(b, &result)
 		if code != 200 || len(result.Items) != 2 {
 			t.Fatal(role, "search", code, string(b))
+		}
+		if code, _, _ = call("GET", "api/event-health", nil, cookie, ""); code != 200 {
+			t.Fatal(role, "health", code)
 		}
 		if code, _, _ = call("GET", "api/event-retention", nil, cookie, ""); code != 200 {
 			t.Fatal(role, "read policy", code)
@@ -127,6 +136,12 @@ func TestSearchAndRetentionHTTPPermissionsDownloadsAndExpiry(t *testing.T) {
 		t.Fatal(code, string(b))
 	}
 	id := list.Items[0].ID
+	verifyCode, verifyBody, _ := call("GET", "api/event-archives?id="+id+"&verify=1", nil, viewer, "")
+	var check telemetry.ArchiveCheck
+	json.Unmarshal(verifyBody, &check)
+	if verifyCode != 200 || !check.Verified || len(check.EventIDs) != 2 {
+		t.Fatal("verified recovery API", verifyCode, string(verifyBody))
+	}
 	code, b, res := call("GET", "api/event-archives?id="+id, nil, viewer, "")
 	sum := sha256.Sum256(b)
 	if code != 200 || res.Header.Get("Content-Type") != "application/gzip" || res.Header.Get("X-Archive-SHA256") != hex.EncodeToString(sum[:]) {

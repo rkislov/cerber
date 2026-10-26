@@ -126,6 +126,22 @@ func lifecycleManagement(store EventStore, w http.ResponseWriter, r *http.Reques
 			http.Error(w, "archive reader busy", 429)
 			return true
 		}
+		if r.URL.Query().Get("verify") == "1" {
+			checker, ok := store.(interface {
+				VerifyArchive(context.Context, string) (telemetry.ArchiveCheck, error)
+			})
+			if !ok {
+				http.Error(w, "archive verifier unavailable", 503)
+				return true
+			}
+			v, e := checker.VerifyArchive(r.Context(), id)
+			if e != nil {
+				fail(e)
+			} else {
+				writeJSON(w, v)
+			}
+			return true
+		}
 		data, a, e := s.ReadArchive(r.Context(), id)
 		if e != nil {
 			fail(e)

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rkislov/cerber/internal/domain"
@@ -106,7 +107,7 @@ func (s *Store) init(ctx context.Context) error {
 	case 7:
 	case 8:
 	case 9:
-	case 10, 11:
+	case 10, 11, 12:
 	default:
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
@@ -176,6 +177,12 @@ func (s *Store) init(ctx context.Context) error {
 	}
 	if version < 11 {
 		if _, err = tx.ExecContext(ctx, patchSchema+"PRAGMA user_version=11;"); err != nil {
+			return err
+		}
+	}
+	if version < 12 {
+		q := "ALTER TABLE alerts RENAME TO alerts_v11;" + strings.Split(alertsSchema, "CREATE UNIQUE INDEX")[0] + "INSERT INTO alerts SELECT * FROM alerts_v11;DROP TABLE alerts_v11;" + alertsSchema + `CREATE TABLE IF NOT EXISTS event_delivery_observations(agent_id TEXT PRIMARY KEY,first_at TEXT NOT NULL,base_batches INTEGER NOT NULL);PRAGMA user_version=12;`
+		if _, err = tx.ExecContext(ctx, q); err != nil {
 			return err
 		}
 	}
