@@ -309,3 +309,39 @@ func TestHistoricalMITREAnnotationsDoNotRewriteEvidence(t *testing.T) {
 		t.Fatal("read rewrote evidence", persisted, e)
 	}
 }
+
+func TestRunDrainsBacklogWithoutIdleDelayBetweenBatches(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "catchup.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	agent := telemetry.ID("catchup-agent")
+	for j := 0; j < 10; j++ {
+		b := telemetry.Batch{SchemaVersion: 1, ID: telemetry.ID("batch", string(rune(j))), AgentID: agent}
+		for i := 0; i < 100; i++ {
+			id := telemetry.ID("raw", string(rune(j*100+i)))
+			b.Records = append(b.Records, telemetry.Raw{ID: id, Source: "journald", Cursor: id, ObservedAt: time.Now().UTC(), Data: json.RawMessage(`{"MESSAGE":"catchup fixture"}`)})
+		}
+		if _, err = s.Accept(ctx, agent, "fixture", b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); s.Run(ctx, func(e error) { t.Errorf("worker: %v", e) }) }()
+	defer func() { cancel(); <-done }()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var pos int64
+		if err = s.db.QueryRowContext(ctx, "select position from consumer_cursors where name='correlator/1'").Scan(&pos); err != nil {
+			t.Fatal(err)
+		}
+		if pos == 1000 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("backlog processing retained the one-second idle delay")
+}
