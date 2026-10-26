@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"io"
 	"mime"
@@ -124,7 +125,7 @@ func (c *Client) SendEvents(ctx context.Context, b telemetry.Batch) (telemetry.R
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return r, errors.New("event delivery rejected; batch retained")
+		return r, fmt.Errorf("event delivery HTTP %d; batch retained", resp.StatusCode)
 	}
 	d := json.NewDecoder(io.LimitReader(resp.Body, 8192))
 	d.DisallowUnknownFields()
