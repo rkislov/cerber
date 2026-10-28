@@ -53,7 +53,7 @@ func (s *Store) archiveRoot() string {
 }
 func retentionPolicy(ctx context.Context, q rowQuery) (telemetry.RetentionPolicy, error) {
 	var p telemetry.RetentionPolicy
-	e := q.QueryRowContext(ctx, "SELECT enabled,hot_days,archive_days,version,max_bytes FROM event_retention WHERE id=1").Scan(&p.Enabled, &p.HotDays, &p.ArchiveDays, &p.Version, &p.MaxBytes)
+	e := q.QueryRowContext(ctx, "SELECT enabled,hot_days,archive_days,version,max_bytes,database_max_bytes,archive_max_bytes,min_free_bytes FROM event_retention WHERE id=1").Scan(&p.Enabled, &p.HotDays, &p.ArchiveDays, &p.Version, &p.MaxBytes, &p.DatabaseMaxBytes, &p.ArchiveMaxBytes, &p.MinFreeBytes)
 	return p, e
 }
 
@@ -72,7 +72,7 @@ func lifecycleAudit(ctx context.Context, tx *sql.Tx, actor, action string, detai
 func (s *Store) RetentionStatus(ctx context.Context) (telemetry.RetentionStatus, error) {
 	var v telemetry.RetentionStatus
 	var at sql.NullString
-	e := s.db.QueryRowContext(ctx, `SELECT enabled,hot_days,archive_days,version,last_success_at,last_error,(SELECT count(*) FROM raw_events WHERE id IN (`+evidenceIDs+`)),(SELECT raw_bytes FROM journal_usage WHERE id=1),(SELECT count(*) FROM event_archives WHERE state IN ('active','expiring')),max_bytes FROM event_retention WHERE id=1`).Scan(&v.Policy.Enabled, &v.Policy.HotDays, &v.Policy.ArchiveDays, &v.Policy.Version, &at, &v.LastError, &v.ProtectedEvents, &v.QuotaBytes, &v.Archives, &v.Policy.MaxBytes)
+	e := s.db.QueryRowContext(ctx, `SELECT enabled,hot_days,archive_days,version,last_success_at,last_error,(SELECT count(*) FROM raw_events WHERE id IN (`+evidenceIDs+`)),(SELECT raw_bytes FROM journal_usage WHERE id=1),(SELECT count(*) FROM event_archives WHERE state IN ('active','expiring')),max_bytes,database_max_bytes,archive_max_bytes,min_free_bytes FROM event_retention WHERE id=1`).Scan(&v.Policy.Enabled, &v.Policy.HotDays, &v.Policy.ArchiveDays, &v.Policy.Version, &at, &v.LastError, &v.ProtectedEvents, &v.QuotaBytes, &v.Archives, &v.Policy.MaxBytes, &v.Policy.DatabaseMaxBytes, &v.Policy.ArchiveMaxBytes, &v.Policy.MinFreeBytes)
 	v.ArchiveConfigured = s.archiveRoot() != ""
 	if at.Valid {
 		t, e2 := parseTime(at.String)
@@ -80,6 +80,15 @@ func (s *Store) RetentionStatus(ctx context.Context) (telemetry.RetentionStatus,
 			return v, e2
 		}
 		v.LastSuccessAt = &t
+	}
+	if e == nil {
+		var storageErr error
+		v.Storage, storageErr = s.storageStatus(ctx, s.db, v.Policy)
+		if storageErr != nil {
+			v.Storage.AdmissionAllowed = false
+			v.Storage.MeasurementError = storageErr.Error()
+			v.Storage.Reason = "Измерение ёмкости недоступно; новые события остаются в очередях агентов"
+		}
 	}
 	return v, e
 }
@@ -108,6 +117,22 @@ func (s *Store) SetRetention(ctx context.Context, p telemetry.RetentionPolicy, a
 	if p.MaxBytes == 0 {
 		p.MaxBytes = prior.MaxBytes
 	}
+	if p.DatabaseMaxBytes == 0 {
+		p.DatabaseMaxBytes = prior.DatabaseMaxBytes
+	}
+	if p.ArchiveMaxBytes == 0 {
+		p.ArchiveMaxBytes = prior.ArchiveMaxBytes
+	}
+	if p.MinFreeBytes == 0 {
+		p.MinFreeBytes = prior.MinFreeBytes
+	}
+	measured, e := s.storageStatus(ctx, tx, p)
+	if e != nil {
+		return e
+	}
+	if p.DatabaseMaxBytes < measured.HotBytes || p.ArchiveMaxBytes < measured.ArchiveBytes {
+		return telemetry.ErrInvalid
+	}
 	var used int64
 	if e = tx.QueryRowContext(ctx, "SELECT raw_bytes FROM journal_usage WHERE id=1").Scan(&used); e != nil {
 		return e
@@ -115,7 +140,7 @@ func (s *Store) SetRetention(ctx context.Context, p telemetry.RetentionPolicy, a
 	if p.MaxBytes < used {
 		return telemetry.ErrInvalid
 	}
-	_, e = tx.ExecContext(ctx, "UPDATE event_retention SET enabled=?,hot_days=?,archive_days=?,max_bytes=?,version=version+1 WHERE id=1", p.Enabled, p.HotDays, p.ArchiveDays, p.MaxBytes)
+	_, e = tx.ExecContext(ctx, "UPDATE event_retention SET enabled=?,hot_days=?,archive_days=?,max_bytes=?,database_max_bytes=?,archive_max_bytes=?,min_free_bytes=?,version=version+1 WHERE id=1", p.Enabled, p.HotDays, p.ArchiveDays, p.MaxBytes, p.DatabaseMaxBytes, p.ArchiveMaxBytes, p.MinFreeBytes)
 	if e != nil {
 		return e
 	}
@@ -123,7 +148,10 @@ func (s *Store) SetRetention(ctx context.Context, p telemetry.RetentionPolicy, a
 	if e = lifecycleAudit(ctx, tx, actor, "policy.updated", map[string]any{"before": prior, "after": p}, now); e != nil {
 		return e
 	}
-	return tx.Commit()
+	if e = tx.Commit(); e != nil {
+		return e
+	}
+	return s.applyPageLimit(ctx, p)
 }
 func (s *Store) Archives(ctx context.Context, before int64) ([]telemetry.Archive, error) {
 	if before < 0 {
@@ -217,7 +245,7 @@ func (s *Store) archiveBatch(ctx context.Context, root string, p telemetry.Reten
 		return 0, e
 	}
 	items := []telemetry.ArchiveRecord{}
-	var rawBytes int64
+	var rawBytes, encodedBytes int64
 	for rows.Next() {
 		var a telemetry.ArchiveRecord
 		var at, raw, n string
@@ -237,6 +265,10 @@ func (s *Store) archiveBatch(ctx context.Context, root string, p telemetry.Reten
 			rows.Close()
 			return 0, e
 		}
+		encodedBytes += int64(len(raw) + len(n) + 2048)
+		if len(items) > 0 && encodedBytes > archivePayloadBytes {
+			break
+		}
 		items = append(items, a)
 		rawBytes += int64(len(raw))
 	}
@@ -247,6 +279,13 @@ func (s *Store) archiveBatch(ctx context.Context, root string, p telemetry.Reten
 	}
 	if len(items) == 0 {
 		return 0, nil
+	}
+	if e = s.checkWrite(ctx, tx, p, 32<<20, true); e != nil {
+		return 0, e
+	}
+	budget, e := s.checkArchiveWrite(ctx, tx, p, encodedBytes*2+(1<<20))
+	if e != nil {
+		return 0, e
 	}
 	var nonce [32]byte
 	if _, e = rand.Read(nonce[:]); e != nil {
@@ -260,7 +299,7 @@ func (s *Store) archiveBatch(ctx context.Context, root string, p telemetry.Reten
 		return 0, e
 	}
 	defer os.Remove(tmp)
-	z := gzip.NewWriter(f)
+	z := gzip.NewWriter(&archiveBudgetWriter{file: f, remaining: budget})
 	encoder := json.NewEncoder(z)
 	for _, a := range items {
 		if e = encoder.Encode(a); e != nil {
@@ -288,7 +327,7 @@ func (s *Store) archiveBatch(ctx context.Context, root string, p telemetry.Reten
 		return 0, e
 	}
 	digest := sha256.Sum256(data)
-	if e = publishArchive(tmp, final); e != nil {
+	if e = s.publishCountedArchive(tmp, final, int64(len(data))); e != nil {
 		return 0, e
 	}
 	a := telemetry.Archive{ID: id, CreatedAt: now, Records: len(items), Bytes: int64(len(data)), SHA256: hex.EncodeToString(digest[:]), FirstSequence: items[0].Sequence, LastSequence: items[len(items)-1].Sequence, State: "active"}
@@ -517,7 +556,7 @@ func (s *Store) expireArchives(ctx context.Context, root string, p telemetry.Ret
 		next, action := "active", "archive.expiration_canceled"
 		if missing || expire {
 			if !missing {
-				if e = os.Remove(path); e != nil && !os.IsNotExist(e) {
+				if e = s.removeCountedArchive(path); e != nil && !os.IsNotExist(e) {
 					tx.Rollback()
 					return e
 				}

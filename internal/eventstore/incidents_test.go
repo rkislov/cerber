@@ -121,7 +121,7 @@ func TestIncidentAuditFailureRollsBackAndMigratesV1(t *testing.T) {
 	defer s.Close()
 	var version int
 	s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version)
-	if version != 4 {
+	if version != 5 {
 		t.Fatal(version)
 	}
 	status, _ := s.Status(ctx)

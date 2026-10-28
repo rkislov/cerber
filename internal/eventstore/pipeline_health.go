@@ -72,6 +72,29 @@ func (s *Store) SamplePipelineHealth(ctx context.Context, now time.Time) error {
 		}
 		conditions["storage_capacity"] = struct{ severity, detail string }{level, fmt.Sprintf("На разделе хранилища осталось %.1f%% свободного места (%d байт). Проверьте архивы и резервные копии.", 100*float64(v.DiskAvailable)/float64(v.DiskTotal), v.DiskAvailable)}
 	}
+	storage := v.Retention.Storage
+	if !storage.AdmissionAllowed {
+		conditions["storage_guard"] = struct{ severity, detail string }{"critical", "Защитная приостановка приёма: " + storage.Reason}
+	}
+	level, detail := "", ""
+	for _, part := range []struct {
+		name        string
+		used, limit int64
+	}{{"SQLite + WAL + SHM", storage.HotBytes, v.Retention.Policy.DatabaseMaxBytes}, {"Архивный каталог", storage.ArchiveBytes, v.Retention.Policy.ArchiveMaxBytes}} {
+		if part.limit > 0 && float64(part.used)/float64(part.limit) >= 0.8 {
+			next := "warning"
+			if float64(part.used)/float64(part.limit) >= 0.95 {
+				next = "critical"
+			}
+			if level != "critical" {
+				level = next
+			}
+			detail += fmt.Sprintf("%s: %d из %d байт. ", part.name, part.used, part.limit)
+		}
+	}
+	if level != "" {
+		conditions["physical_capacity"] = struct{ severity, detail string }{level, detail}
+	}
 	if v.JournalPercent >= 80 {
 		level := "warning"
 		if v.JournalPercent >= 95 {
@@ -90,7 +113,7 @@ func (s *Store) SamplePipelineHealth(ctx context.Context, now time.Time) error {
 		return e
 	}
 	defer tx.Rollback()
-	for _, kind := range []string{"journal_capacity", "pipeline_lag", "archive_error", "storage_capacity"} {
+	for _, kind := range []string{"journal_capacity", "pipeline_lag", "archive_error", "storage_capacity", "storage_guard", "physical_capacity"} {
 		var id, severity, raised string
 		e = tx.QueryRowContext(ctx, "SELECT id,severity,raised_at FROM pipeline_health_alerts WHERE kind=? AND resolved_at IS NULL", kind).Scan(&id, &severity, &raised)
 		if e != nil && e != sql.ErrNoRows {
@@ -150,5 +173,5 @@ func (s *Store) HealthNotificationBatch(ctx context.Context, after int64) ([]int
 }
 
 func pipelineAlertTitle(kind string) string {
-	return map[string]string{"journal_capacity": "заполнение журнала событий", "pipeline_lag": "задержка обработки событий", "archive_error": "ошибка архивирования", "storage_capacity": "недостаточно свободного места"}[kind]
+	return map[string]string{"journal_capacity": "заполнение журнала событий", "pipeline_lag": "задержка обработки событий", "archive_error": "ошибка архивирования", "storage_capacity": "недостаточно свободного места", "storage_guard": "защитная приостановка приёма", "physical_capacity": "физическое заполнение хранилища"}[kind]
 }

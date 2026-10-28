@@ -19,6 +19,8 @@ const MaxRecords = 100
 
 var ErrInvalid = errors.New("invalid security event batch")
 var ErrConflict = errors.New("immutable security event conflict")
+var ErrStorageProtected = errors.New("event storage protected; source cursor retained")
+
 var ErrFull = errors.New("event spool full; source cursor retained")
 var ErrExpired = errors.New("event archive expired")
 var ErrNotFound = errors.New("event not found")
