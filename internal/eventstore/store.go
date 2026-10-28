@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/rkislov/cerber/internal/correlation"
+	"github.com/rkislov/cerber/internal/health"
 	"github.com/rkislov/cerber/internal/telemetry"
 	_ "modernc.org/sqlite"
 )
@@ -28,6 +29,14 @@ var incidentsSchema string
 var lifecycleSchema string
 
 type Store struct {
+	archiveUsageMu                         sync.Mutex
+	archiveUsageAt                         time.Time
+	archiveUsageBytes, archiveUsageFiles   int64
+	archiveUsageError                      error
+	checkpointMu                           sync.Mutex
+	checkpointAt                           time.Time
+	checkpointBusy                         bool
+	spaceProbe                             func(string) (uint64, uint64, string, error)
 	healthMu                               sync.Mutex
 	lastHealth                             telemetry.PipelineHealth
 	lastHealthOrdinal, lastHealthProcessed int64
@@ -54,15 +63,15 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, path: path}
-	for _, q := range []string{"PRAGMA busy_timeout=5000", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL"} {
+	s := &Store{db: db, path: path, spaceProbe: health.DiskSpace}
+	for _, q := range []string{"PRAGMA busy_timeout=5000", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA wal_autocheckpoint=1000", "PRAGMA journal_size_limit=67108864"} {
 		if _, e = db.ExecContext(ctx, q); e != nil {
 			db.Close()
 			return nil, e
 		}
 	}
 	var version int
-	if e = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); e != nil || version > 4 {
+	if e = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); e != nil || version > 5 {
 		db.Close()
 		return nil, fmt.Errorf("unsupported event database version: %d: %v", version, e)
 	}
@@ -104,6 +113,21 @@ func Open(ctx context.Context, path string) (*Store, error) {
 			db.Close()
 			return nil, e
 		}
+	}
+	if version < 5 {
+		if _, e = db.ExecContext(ctx, `BEGIN;ALTER TABLE event_retention ADD COLUMN database_max_bytes INTEGER NOT NULL DEFAULT 17179869184;ALTER TABLE event_retention ADD COLUMN archive_max_bytes INTEGER NOT NULL DEFAULT 8589934592;ALTER TABLE event_retention ADD COLUMN min_free_bytes INTEGER NOT NULL DEFAULT 2147483648;PRAGMA user_version=5;COMMIT;`); e != nil {
+			db.ExecContext(ctx, "ROLLBACK")
+			db.Close()
+			return nil, e
+		}
+	}
+	p, e := retentionPolicy(ctx, db)
+	if e == nil {
+		e = s.applyPageLimit(ctx, p)
+	}
+	if e != nil {
+		db.Close()
+		return nil, e
 	}
 	return s, nil
 }
@@ -152,6 +176,13 @@ func (s *Store) Accept(ctx context.Context, agent, asset string, b telemetry.Bat
 		return receipt, e
 	}
 	if !errors.Is(e, sql.ErrNoRows) {
+		return receipt, e
+	}
+	limits, e := retentionPolicy(ctx, tx)
+	if e != nil {
+		return receipt, e
+	}
+	if e = s.checkWrite(ctx, tx, limits, int64(len(data))*16+4<<20, false); e != nil {
 		return receipt, e
 	}
 	now := time.Now().UTC()
@@ -327,11 +358,16 @@ func (s *Store) step(ctx context.Context, stage string) error {
 	if e != nil {
 		return e
 	}
+	var inputBytes int64
 	for rows.Next() {
 		var v item
 		if e = rows.Scan(&v.seq, &v.agent, &v.asset, &v.at, &v.p); e != nil {
 			rows.Close()
 			return e
+		}
+		inputBytes += int64(len(v.p))
+		if len(items) > 0 && inputBytes > 8<<20 {
+			break
 		}
 		items = append(items, v)
 	}
@@ -339,6 +375,15 @@ func (s *Store) step(ctx context.Context, stage string) error {
 	rows.Close()
 	if e != nil {
 		return e
+	}
+	if len(items) > 0 {
+		limits, e := retentionPolicy(ctx, tx)
+		if e != nil {
+			return e
+		}
+		if e = s.checkWrite(ctx, tx, limits, inputBytes*8+(4<<20), true); e != nil {
+			return e
+		}
 	}
 	for _, v := range items {
 		if stage == "normalizer/1" {
@@ -467,10 +512,11 @@ func (s *Store) Run(ctx context.Context, onError func(error)) {
 	go func() {
 		defer close(maintenanceDone)
 		for {
-			if _, e := s.Maintain(ctx, time.Now().UTC()); e != nil && ctx.Err() == nil {
+			delay, e := s.maintenanceStep(ctx)
+			if e != nil && ctx.Err() == nil {
 				onError(e)
 			}
-			t := time.NewTimer(time.Minute)
+			t := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
 				t.Stop()

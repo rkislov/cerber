@@ -95,6 +95,10 @@ func NewEventHandler(bindings EventBindings, journal EventJournal) http.Handler 
 		}
 		receipt, e := journal.Accept(r.Context(), id, asset, b)
 		if e != nil {
+			if errors.Is(e, telemetry.ErrStorageProtected) || errors.Is(e, telemetry.ErrFull) {
+				w.Header().Set("Retry-After", "60")
+				w.Header().Set("X-Cerber-Backpressure", "storage")
+			}
 			status := 503
 			if errors.Is(e, telemetry.ErrConflict) {
 				status = 409
