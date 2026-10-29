@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/rkislov/cerber/internal/correlation"
 	"github.com/rkislov/cerber/internal/integrations"
 	"github.com/rkislov/cerber/internal/rulepolicy"
 	"github.com/rkislov/cerber/internal/rulepreview"
@@ -29,6 +30,9 @@ func (s *Store) PreviewRule(ctx context.Context, req RulePreviewRequest, index *
 		return out, rulepolicy.ErrNotFound
 	}
 	out.Policy = cfg
+	if correlation.ChainRule(req.Rule) {
+		out.Limitations = "Изолированная межузловая проверка: срабатывания, курсоры, уведомления и active response не изменяются. До 100 выбранных событий, 200 записей / 8 МиБ истории на опорное событие, 20 узлов плюс очистка аудита в цепочке. История берётся из оперативного журнала до выбранной последовательности; архивы не читаются. Каждый участник проходит группы и исключения; используется текущий состав групп. Только явный SID/Logon GUID/SSH-отпечаток, имена и IP не объединяют узлы. Подавление моделируется между выбранными результатами по общему ключу, без уже созданных боевых срабатываний. Это последовательность наблюдений, не доказательство атаки."
+	}
 	out.IOCRevision = iocRevision
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -101,7 +105,15 @@ func (s *Store) PreviewRule(ctx context.Context, req RulePreviewRequest, index *
 				}
 				row.Reason = "Совпадений с текущим набором IOC нет"
 			} else {
-				d, why, truncated, e := r.evaluate(ctx, tx, n)
+				var d *telemetry.Detection
+				var why string
+				var truncated bool
+				var e error
+				if correlation.ChainRule(req.Rule) {
+					d, why, truncated, e = r.evaluateChain(ctx, tx, req.Rule, n)
+				} else {
+					d, why, truncated, e = r.evaluate(ctx, tx, n)
+				}
 				if e != nil {
 					return out, e
 				}
@@ -124,7 +136,7 @@ func (s *Store) PreviewRule(ctx context.Context, req RulePreviewRequest, index *
 						if delta < 0 {
 							delta = -delta
 						}
-						if p.Rule == d.Rule && p.AgentID == d.AgentID && p.User == d.User && p.SourceIP == d.SourceIP && p.GroupKey == d.GroupKey && delta <= time.Duration(cfg.SuppressionSeconds)*time.Second {
+						if p.Rule == d.Rule && (correlation.ChainRule(d.Rule) || p.AgentID == d.AgentID && p.User == d.User && p.SourceIP == d.SourceIP) && p.GroupKey == d.GroupKey && delta <= time.Duration(cfg.SuppressionSeconds)*time.Second {
 							suppressed = true
 							break
 						}

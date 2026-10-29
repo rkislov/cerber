@@ -65,6 +65,8 @@ func Normalize(r RawRecord) Normalized {
 					n.Outcome = []string{"failure", "success"}[i]
 					n.User = m[1]
 					n.SourceIP = m[2]
+					n.Identity = sshIdentity(field, msg)
+					n.Parser = "native-auth/2"
 					break
 				}
 			}
@@ -101,8 +103,11 @@ func Normalize(r RawRecord) Normalized {
 					n.User = d + `\` + n.User
 				}
 				n.SourceIP = v.Fields["IpAddress"]
+				n.Identity = windowsIdentity(v.Fields, v.Computer, "Target")
+				n.Parser = "windows-auth/3"
 			case 1102:
-				n.Parser = "windows-audit/2"
+				n.Parser = "windows-audit/3"
+				n.Identity = windowsIdentity(v.Fields, v.Computer, "Subject")
 				n.User = v.Fields["SubjectUserName"]
 				if domain := v.Fields["SubjectDomainName"]; domain != "" && domain != "-" && n.User != "" {
 					n.User = domain + `\` + n.User

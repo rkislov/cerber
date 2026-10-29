@@ -8,6 +8,7 @@ import (
 	"errors"
 	"github.com/rkislov/cerber/internal/rulepolicy"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -17,17 +18,18 @@ func (s *Store) initRulePolicies(ctx context.Context) error {
 		return e
 	}
 	defer tx.Rollback()
-	_, e = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS correlation_policy_versions(rule TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(rule,revision));CREATE TABLE IF NOT EXISTS correlation_policy_active(rule TEXT PRIMARY KEY,revision INTEGER NOT NULL,FOREIGN KEY(rule,revision) REFERENCES correlation_policy_versions(rule,revision));`)
+	_, e = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS correlation_policy_versions(rule TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(rule,revision));CREATE TABLE IF NOT EXISTS correlation_policy_active(rule TEXT PRIMARY KEY,revision INTEGER NOT NULL,FOREIGN KEY(rule,revision) REFERENCES correlation_policy_versions(rule,revision));CREATE TABLE IF NOT EXISTS correlation_chain_policy_versions(rule TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(rule,revision));CREATE TABLE IF NOT EXISTS correlation_chain_policy_active(rule TEXT PRIMARY KEY,revision INTEGER NOT NULL,FOREIGN KEY(rule,revision) REFERENCES correlation_chain_policy_versions(rule,revision));`)
 	if e != nil {
 		return e
 	}
 	for id, cfg := range rulepolicy.Defaults() {
 		v := rulepolicy.Version{Rule: id, Revision: 1, Config: cfg, Actor: "system", At: time.Now().UTC(), Reason: "Исходные встроенные условия"}
 		p, _ := json.Marshal(v)
-		if _, e = tx.ExecContext(ctx, "INSERT OR IGNORE INTO correlation_policy_versions VALUES(?,?,?)", id, 1, string(p)); e != nil {
+		versions, active := policyTables(id)
+		if _, e = tx.ExecContext(ctx, "INSERT OR IGNORE INTO "+versions+" VALUES(?,?,?)", id, 1, string(p)); e != nil {
 			return e
 		}
-		if _, e = tx.ExecContext(ctx, "INSERT OR IGNORE INTO correlation_policy_active VALUES(?,1)", id); e != nil {
+		if _, e = tx.ExecContext(ctx, "INSERT OR IGNORE INTO "+active+" VALUES(?,1)", id); e != nil {
 			return e
 		}
 	}
@@ -36,7 +38,7 @@ func (s *Store) initRulePolicies(ctx context.Context) error {
 func loadRulePolicies(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }) (map[string]rulepolicy.Version, error) {
-	rows, e := q.QueryContext(ctx, "SELECT v.payload FROM correlation_policy_active a JOIN correlation_policy_versions v ON v.rule=a.rule AND v.revision=a.revision")
+	rows, e := q.QueryContext(ctx, "SELECT v.payload FROM correlation_policy_active a JOIN correlation_policy_versions v ON v.rule=a.rule AND v.revision=a.revision UNION ALL SELECT v.payload FROM correlation_chain_policy_active a JOIN correlation_chain_policy_versions v ON v.rule=a.rule AND v.revision=a.revision")
 	if e != nil {
 		return nil, e
 	}
@@ -74,7 +76,8 @@ func (s *Store) RulePolicyHistory(ctx context.Context, id string, before int64) 
 	if _, ok := rulepolicy.Defaults()[id]; !ok || before < 0 {
 		return nil, rulepolicy.ErrInvalid
 	}
-	rows, e := s.db.QueryContext(ctx, "SELECT payload FROM correlation_policy_versions WHERE rule=? AND (?=0 OR revision<?) ORDER BY revision DESC LIMIT 51", id, before, before)
+	versions, _ := policyTables(id)
+	rows, e := s.db.QueryContext(ctx, "SELECT payload FROM "+versions+" WHERE rule=? AND (?=0 OR revision<?) ORDER BY revision DESC LIMIT 51", id, before, before)
 	if e != nil {
 		return nil, e
 	}
@@ -104,6 +107,7 @@ func (s *Store) ChangeRulePolicy(ctx context.Context, c rulepolicy.Change, actor
 	if _, ok := rulepolicy.Defaults()[c.Rule]; !ok {
 		return out, rulepolicy.ErrInvalid
 	}
+	versions, active := policyTables(c.Rule)
 	tx, e := s.db.BeginTx(ctx, nil)
 	if e != nil {
 		return out, e
@@ -123,7 +127,7 @@ func (s *Store) ChangeRulePolicy(ctx context.Context, c rulepolicy.Change, actor
 			return out, rulepolicy.ErrInvalid
 		}
 		var p string
-		e = tx.QueryRowContext(ctx, "SELECT payload FROM correlation_policy_versions WHERE rule=? AND revision=?", c.Rule, c.TargetRevision).Scan(&p)
+		e = tx.QueryRowContext(ctx, "SELECT payload FROM "+versions+" WHERE rule=? AND revision=?", c.Rule, c.TargetRevision).Scan(&p)
 		if errors.Is(e, sql.ErrNoRows) {
 			return out, rulepolicy.ErrNotFound
 		}
@@ -152,10 +156,10 @@ func (s *Store) ChangeRulePolicy(ctx context.Context, c rulepolicy.Change, actor
 	if e = s.checkWrite(ctx, tx, retention, int64(len(p))*16+(64<<10), true); e != nil {
 		return out, e
 	}
-	if _, e = tx.ExecContext(ctx, "INSERT INTO correlation_policy_versions VALUES(?,?,?)", out.Rule, out.Revision, string(p)); e != nil {
+	if _, e = tx.ExecContext(ctx, "INSERT INTO "+versions+" VALUES(?,?,?)", out.Rule, out.Revision, string(p)); e != nil {
 		return out, e
 	}
-	if _, e = tx.ExecContext(ctx, "UPDATE correlation_policy_active SET revision=? WHERE rule=?", out.Revision, out.Rule); e != nil {
+	if _, e = tx.ExecContext(ctx, "UPDATE "+active+" SET revision=? WHERE rule=?", out.Revision, out.Rule); e != nil {
 		return out, e
 	}
 	return out, tx.Commit()
@@ -167,7 +171,8 @@ func (s *Store) RulePolicyVersion(ctx context.Context, id string, revision int64
 		return v, rulepolicy.ErrInvalid
 	}
 	var p string
-	e := s.db.QueryRowContext(ctx, "SELECT payload FROM correlation_policy_versions WHERE rule=? AND revision=?", id, revision).Scan(&p)
+	versions, _ := policyTables(id)
+	e := s.db.QueryRowContext(ctx, "SELECT payload FROM "+versions+" WHERE rule=? AND revision=?", id, revision).Scan(&p)
 	if errors.Is(e, sql.ErrNoRows) {
 		return v, rulepolicy.ErrNotFound
 	}
@@ -176,4 +181,13 @@ func (s *Store) RulePolicyVersion(ctx context.Context, id string, revision int64
 	}
 	e = json.Unmarshal([]byte(p), &v)
 	return v, e
+}
+
+// New rule-family tables keep rollback to a pre-chain server compatible: older
+// binaries validate the native policy count and must still see exactly 10 rows.
+func policyTables(id string) (string, string) {
+	if strings.HasPrefix(id, "chain.") {
+		return "correlation_chain_policy_versions", "correlation_chain_policy_active"
+	}
+	return "correlation_policy_versions", "correlation_policy_active"
 }

@@ -282,3 +282,17 @@ func TestReplayRejectedBeforeIOCCacheMutation(t *testing.T) {
 		t.Fatal("replayed cache was written")
 	}
 }
+func TestCrossHostChainDoesNotProposeAnIPBlock(t *testing.T) {
+	s, _ := fixture(t)
+	ctx := context.Background()
+	if e := s.Command(ctx, Command{Action: "policy", Policy: testPolicy("learning"), Confirm: true}, "roman", nil); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.Observe(ctx, []telemetry.Detection{{ID: "chain", AgentID: "agent", SourceIP: "198.51.100.10", Rule: "chain.ssh_key_hosts"}}); e != nil {
+		t.Fatal(e)
+	}
+	var count int
+	if e := s.db.QueryRow("SELECT count(*) FROM blocks").Scan(&count); e != nil || count != 0 {
+		t.Fatal("chain caused response", count, e)
+	}
+}

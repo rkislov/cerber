@@ -139,19 +139,33 @@ func configuredSuppressed(ctx context.Context, tx *sql.Tx, d telemetry.Detection
 		return false, nil
 	}
 	var count int
+	if correlation.ChainRule(d.Rule) {
+		e := tx.QueryRowContext(ctx, `SELECT count(*) FROM detections INDEXED BY detection_chain_group WHERE rule LIKE 'chain.%' AND rule=? AND json_extract(payload,'$.group_key')=? AND event_time>=? AND event_time<=?`, d.Rule, d.GroupKey, stamp(n.EventTime.Add(-time.Duration(seconds)*time.Second)), stamp(n.EventTime.Add(time.Duration(seconds)*time.Second))).Scan(&count)
+		return count > 0, e
+	}
 	e := tx.QueryRowContext(ctx, `SELECT count(*) FROM detections WHERE rule=? AND agent_id=? AND user_name=? AND source_ip=? AND coalesce(json_extract(payload,'$.group_key'),'')=? AND event_time>=? AND event_time<=?`, d.Rule, d.AgentID, d.User, d.SourceIP, d.GroupKey, stamp(n.EventTime.Add(-time.Duration(seconds)*time.Second)), stamp(n.EventTime.Add(time.Duration(seconds)*time.Second))).Scan(&count)
 	return count > 0, e
 }
 func (r *ruleRuntime) correlate(ctx context.Context, tx *sql.Tx, n telemetry.Normalized) error {
 	d, _, _, e := r.evaluate(ctx, tx, n)
-	if e != nil || d == nil {
+	if e != nil {
 		return e
 	}
-	suppressed, e := configuredSuppressed(ctx, tx, *d, n, r.policies[d.Rule].Config.SuppressionSeconds)
-	if e != nil || suppressed {
-		return e
+	if d != nil {
+		if e = r.insertDetection(ctx, tx, *d, n); e != nil {
+			return e
+		}
 	}
-	p, _ := json.Marshal(d)
-	_, e = tx.ExecContext(ctx, "INSERT OR IGNORE INTO detections(id,rule,agent_id,user_name,source_ip,event_time,payload) VALUES(?,?,?,?,?,?,?)", d.ID, d.Rule, d.AgentID, d.User, d.SourceIP, stamp(n.EventTime), string(p))
-	return e
+	for _, rule := range correlation.ChainCandidates(n) {
+		d, _, _, e := r.evaluateChain(ctx, tx, rule, n)
+		if e != nil {
+			return e
+		}
+		if d != nil {
+			if e = r.insertDetection(ctx, tx, *d, n); e != nil {
+				return e
+			}
+		}
+	}
+	return nil
 }

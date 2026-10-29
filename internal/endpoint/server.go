@@ -13,6 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 	"net/netip"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -346,6 +347,9 @@ func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 // Observe creates proposals only. It never authorizes a firewall change.
 func (s *Server) Observe(ctx context.Context, detections []telemetry.Detection) error {
 	for _, d := range detections {
+		if strings.HasPrefix(d.Rule, "chain.") {
+			continue
+		} // Cross-host identifiers do not identify an IP to block.
 		if d.SourceIP == "" {
 			continue
 		}
