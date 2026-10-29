@@ -499,6 +499,9 @@ func (c *Catalog) SyncOVAL(ctx context.Context, bindings []InventoryBinding) {
 var ovalClient = &http.Client{Timeout: 90 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
 func (c *Catalog) AssessPackage(ctx context.Context, m Match, b InventoryBinding, now time.Time) PackageAssessment {
+	if strings.EqualFold(b.Snapshot.OS.Family, "windows") {
+		return c.AssessWindows(ctx, m, b, now)
+	}
 	if b.Snapshot.OS.DistributionID == "ubuntu" {
 		return c.AssessUbuntu(ctx, m, b, now)
 	}

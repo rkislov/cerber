@@ -67,6 +67,7 @@ type PackageEvidence struct {
 	Status        string `json:"status"`
 }
 type PackageAssessment struct {
+	Windows        *WindowsEvidence  `json:"windows,omitempty"`
 	SourceName     string            `json:"source_name,omitempty"`
 	Definitions    []string          `json:"definitions,omitempty"`
 	Status         string            `json:"status"`

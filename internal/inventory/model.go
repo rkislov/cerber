@@ -19,18 +19,21 @@ type Coverage struct {
 	Detail  string `json:"detail,omitempty"`
 }
 type OS struct {
-	CPEName        string   `json:"cpe_name,omitempty"`
-	BranchID       string   `json:"branch_id,omitempty"`
-	DistributionID string   `json:"distribution_id,omitempty"`
-	IDLike         []string `json:"id_like,omitempty"`
-	Codename       string   `json:"codename,omitempty"`
-	Kernel         string   `json:"kernel,omitempty"`
-	Name           string   `json:"name"`
-	Family         string   `json:"family"`
-	Version        string   `json:"version"`
-	Build          string   `json:"build"`
-	Edition        string   `json:"edition,omitempty"`
-	Architecture   string   `json:"architecture"`
+	RebootRequired   *bool    `json:"reboot_required,omitempty"`
+	Release          string   `json:"release,omitempty"`
+	InstallationType string   `json:"installation_type,omitempty"`
+	CPEName          string   `json:"cpe_name,omitempty"`
+	BranchID         string   `json:"branch_id,omitempty"`
+	DistributionID   string   `json:"distribution_id,omitempty"`
+	IDLike           []string `json:"id_like,omitempty"`
+	Codename         string   `json:"codename,omitempty"`
+	Kernel           string   `json:"kernel,omitempty"`
+	Name             string   `json:"name"`
+	Family           string   `json:"family"`
+	Version          string   `json:"version"`
+	Build            string   `json:"build"`
+	Edition          string   `json:"edition,omitempty"`
+	Architecture     string   `json:"architecture"`
 }
 type Component struct {
 	SourcePackage     string   `json:"source_package,omitempty"`
@@ -128,7 +131,7 @@ func (s Snapshot) Validate() error {
 	for _, field := range []struct {
 		value string
 		limit int
-	}{{s.OS.Name, 512}, {s.OS.Family, 64}, {s.OS.Version, 256}, {s.OS.Build, 256}, {s.OS.Edition, 256}, {s.OS.Architecture, 64}} {
+	}{{s.OS.Release, 64}, {s.OS.InstallationType, 64}, {s.OS.Name, 512}, {s.OS.Family, 64}, {s.OS.Version, 256}, {s.OS.Build, 256}, {s.OS.Edition, 256}, {s.OS.Architecture, 64}} {
 		if len(field.value) > field.limit {
 			return fmt.Errorf("OS metadata field exceeds length limit")
 		}

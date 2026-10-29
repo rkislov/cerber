@@ -373,6 +373,21 @@ func (s *Server) networkVulns(ctx context.Context, h netscan.Host) []vuln.Match 
 	return out
 }
 func (s *Server) RunNetworkCatalog(ctx context.Context) {
+	microsoftDone := make(chan struct{})
+	go func() {
+		defer close(microsoftDone)
+		for {
+			s.Catalog.SyncMicrosoft(ctx)
+			timer := time.NewTimer(time.Minute)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}()
+	defer func() { <-microsoftDone }()
 	for {
 		s.mu.Lock()
 		v, e := s.networkLoad(ctx)

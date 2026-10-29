@@ -54,6 +54,7 @@ type Cache struct {
 	Records []Record  `json:"records"`
 }
 type Status struct {
+	Microsoft     MicrosoftStatus    `json:"microsoft"`
 	OVALSources   []OVALSourceStatus `json:"oval_sources"`
 	UbuntuRecords int                `json:"ubuntu_records"`
 	UbuntuErrors  int                `json:"ubuntu_errors"`
@@ -66,15 +67,17 @@ type Status struct {
 	ProductErrors []string           `json:"product_errors"`
 }
 type Catalog struct {
-	db          *sql.DB
-	mu          sync.Mutex
-	busy        atomic.Bool
-	force       atomic.Bool
-	ubuntuForce atomic.Bool
-	ubuntuBusy  atomic.Bool
-	ovalBusy    atomic.Bool
-	ovalForce   atomic.Bool
-	path        string
+	microsoftForce atomic.Bool
+	microsoftBusy  atomic.Bool
+	db             *sql.DB
+	mu             sync.Mutex
+	busy           atomic.Bool
+	force          atomic.Bool
+	ubuntuForce    atomic.Bool
+	ubuntuBusy     atomic.Bool
+	ovalBusy       atomic.Bool
+	ovalForce      atomic.Bool
+	path           string
 }
 
 func Open(path string) (*Catalog, error) {
@@ -83,12 +86,12 @@ func Open(path string) (*Catalog, error) {
 		return nil, e
 	}
 	f.Close()
-	db, e := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)")
+	db, e := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_size_limit(67108864)")
 	if e != nil {
 		return nil, e
 	}
 	db.SetMaxOpenConns(4)
-	_, e = db.Exec(`PRAGMA journal_mode=WAL;PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS vendor_oval_sources(id TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS vendor_oval_records(source TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(source,id));CREATE TABLE IF NOT EXISTS ubuntu_osv(cve TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS products(cpe TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS bdu(id TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS bdu_cve(cve TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(cve,id));CREATE TABLE IF NOT EXISTS bdu_cpe(cpe TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(cpe,id));CREATE TABLE IF NOT EXISTS bdu_software(product TEXT NOT NULL,version TEXT NOT NULL,id TEXT NOT NULL);CREATE INDEX IF NOT EXISTS bdu_software_product ON bdu_software(product);CREATE TABLE IF NOT EXISTS metadata(id TEXT PRIMARY KEY,payload TEXT NOT NULL);`)
+	_, e = db.Exec(`CREATE TABLE IF NOT EXISTS msrc_documents(id TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS msrc_entries(document TEXT NOT NULL,ordinal INTEGER NOT NULL,cve TEXT NOT NULL,target TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(document,ordinal));CREATE INDEX IF NOT EXISTS msrc_target ON msrc_entries(target,cve);PRAGMA journal_mode=WAL;PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS vendor_oval_sources(id TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS vendor_oval_records(source TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(source,id));CREATE TABLE IF NOT EXISTS ubuntu_osv(cve TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS products(cpe TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS bdu(id TEXT PRIMARY KEY,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS bdu_cve(cve TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(cve,id));CREATE TABLE IF NOT EXISTS bdu_cpe(cpe TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(cpe,id));CREATE TABLE IF NOT EXISTS bdu_software(product TEXT NOT NULL,version TEXT NOT NULL,id TEXT NOT NULL);CREATE INDEX IF NOT EXISTS bdu_software_product ON bdu_software(product);CREATE TABLE IF NOT EXISTS metadata(id TEXT PRIMARY KEY,payload TEXT NOT NULL);`)
 	if e != nil {
 		db.Close()
 		return nil, e
@@ -155,6 +158,7 @@ func (c *Catalog) cache(ctx context.Context, key string) Cache {
 }
 func (c *Catalog) Status(ctx context.Context) Status {
 	var s Status
+	s.Microsoft = c.MicrosoftStatus(ctx)
 	var b string
 	if c.db.QueryRowContext(ctx, "SELECT payload FROM metadata WHERE id='bdu'").Scan(&b) == nil {
 		json.Unmarshal([]byte(b), &s.BDU)
@@ -184,7 +188,12 @@ func (c *Catalog) Status(ctx context.Context) Status {
 	sort.Slice(s.OVALSources, func(i, j int) bool { return s.OVALSources[i].ID < s.OVALSources[j].ID })
 	return s
 }
-func (c *Catalog) Request() { c.force.Store(true); c.ubuntuForce.Store(true); c.ovalForce.Store(true) }
+func (c *Catalog) Request() {
+	c.microsoftForce.Store(true)
+	c.force.Store(true)
+	c.ubuntuForce.Store(true)
+	c.ovalForce.Store(true)
+}
 func (c *Catalog) Lookup(ctx context.Context, raw string) []Match {
 	key := CPE(raw)
 	if key == "" {
