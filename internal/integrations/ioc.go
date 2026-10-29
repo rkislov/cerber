@@ -79,7 +79,8 @@ func NewIndex(items []IOC) *Index {
 	}
 	return x
 }
-func (x *Index) Match(n telemetry.Normalized) []telemetry.Detection {
+func (x *Index) Match(n telemetry.Normalized) []telemetry.Detection { return x.MatchForRule(n, "", 0) }
+func (x *Index) MatchForRule(n telemetry.Normalized, ruleID string, limit int) []telemetry.Detection {
 	if x == nil || n.Status != "parsed" {
 		return nil
 	}
@@ -128,7 +129,13 @@ func (x *Index) Match(n telemetry.Normalized) []telemetry.Detection {
 				severity = "medium"
 				title += " · IP совпал; порт IOC не подтверждён"
 			}
+			if ruleID != "" && rule != ruleID {
+				continue
+			}
 			out = append(out, telemetry.Detection{ID: telemetry.ID("threatfox.ioc_match/1", n.ID, v.ID), Rule: rule, Version: 1, AgentID: n.AgentID, AssetID: n.AssetID, SourceIP: n.SourceIP, Severity: severity, Title: title, CreatedAt: time.Now().UTC(), FirstSeen: n.EventTime, LastSeen: n.EventTime, Evidence: []string{n.ID}, State: "open", GroupKey: "threatfox:" + v.ID})
+			if limit > 0 && len(out) >= limit {
+				return out
+			}
 		}
 	}
 	return out

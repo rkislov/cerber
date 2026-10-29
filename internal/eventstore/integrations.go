@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"github.com/rkislov/cerber/internal/integrations"
+	"github.com/rkislov/cerber/internal/rulepolicy"
 	"github.com/rkislov/cerber/internal/telemetry"
 )
 
@@ -66,8 +67,26 @@ func (s *Store) ScanIOC(ctx context.Context, index *integrations.Index, revision
 	if e != nil {
 		return e
 	}
+	policies, e := loadRulePolicies(ctx, tx)
+	if e != nil {
+		return e
+	}
+	runtime := ruleRuntime{store: s, policies: policies, members: map[string][]string{}}
 	for _, n := range events {
 		for _, d := range index.Match(n) {
+			v, ok := policies[d.Rule]
+			if !ok {
+				return rulepolicy.ErrInvalid
+			}
+			groups, e := runtime.groups(ctx, d.Rule, n)
+			if e != nil {
+				return e
+			}
+			matched, reason := rulepolicy.ScopeEvent(v.Config, n.AgentID, n.User, n.SourceIP, n.DestinationIP, groups)
+			if reason != "" {
+				continue
+			}
+			d.Policy = rulepolicy.Application(v, matched)
 			p, _ := json.Marshal(d)
 			if _, e = tx.ExecContext(ctx, "INSERT OR IGNORE INTO detections(id,rule,agent_id,user_name,source_ip,event_time,payload) VALUES(?,?,?,?,?,?,?)", d.ID, d.Rule, d.AgentID, d.User, d.SourceIP, stamp(n.EventTime), string(p)); e != nil {
 				return e

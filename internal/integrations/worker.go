@@ -321,3 +321,10 @@ func (w *Worker) EndpointFeed(ctx context.Context, known string) (string, []IOC,
 	e = json.Unmarshal([]byte(payload), &items)
 	return revision, items, e
 }
+
+// RulePreviewIndex returns the immutable index snapshot used by the live scanner.
+func (w *Worker) RulePreviewIndex() (*Index, string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.index, w.revision
+}

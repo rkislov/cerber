@@ -192,6 +192,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 				return err
 			}
 			defer eventDB.Close()
+			eventDB.SetRuleGroupSource(store)
 			if *eventArchiveDir != "" {
 				if err = eventDB.ConfigureArchive(*eventArchiveDir); err != nil {
 					return err

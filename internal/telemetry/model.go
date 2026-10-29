@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/rkislov/cerber/internal/attack"
+	"github.com/rkislov/cerber/internal/rulepolicy"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -125,24 +126,25 @@ type RawRecord struct {
 	Raw              Raw
 }
 type Detection struct {
-	Attack         *attack.Assessment `json:"attack,omitempty"`
-	GroupKey       string             `json:"group_key,omitempty"`
-	Sequence       int64              `json:"sequence"`
-	ID             string             `json:"id"`
-	Rule           string             `json:"rule"`
-	Version        int                `json:"version"`
-	AgentID        string             `json:"agent_id"`
-	AssetID        string             `json:"asset_id"`
-	User           string             `json:"user"`
-	SourceIP       string             `json:"source_ip"`
-	Severity       string             `json:"severity"`
-	Title          string             `json:"title"`
-	CreatedAt      time.Time          `json:"created_at"`
-	FirstSeen      time.Time          `json:"first_seen"`
-	LastSeen       time.Time          `json:"last_seen"`
-	Evidence       []string           `json:"evidence"`
-	State          string             `json:"state"`
-	AcknowledgedBy string             `json:"acknowledged_by,omitempty"`
+	Policy         *rulepolicy.Applied `json:"policy,omitempty"`
+	Attack         *attack.Assessment  `json:"attack,omitempty"`
+	GroupKey       string              `json:"group_key,omitempty"`
+	Sequence       int64               `json:"sequence"`
+	ID             string              `json:"id"`
+	Rule           string              `json:"rule"`
+	Version        int                 `json:"version"`
+	AgentID        string              `json:"agent_id"`
+	AssetID        string              `json:"asset_id"`
+	User           string              `json:"user"`
+	SourceIP       string              `json:"source_ip"`
+	Severity       string              `json:"severity"`
+	Title          string              `json:"title"`
+	CreatedAt      time.Time           `json:"created_at"`
+	FirstSeen      time.Time           `json:"first_seen"`
+	LastSeen       time.Time           `json:"last_seen"`
+	Evidence       []string            `json:"evidence"`
+	State          string              `json:"state"`
+	AcknowledgedBy string              `json:"acknowledged_by,omitempty"`
 }
 type Query struct {
 	Text, Source, User, SourceIP, Code, Outcome, TimeField string

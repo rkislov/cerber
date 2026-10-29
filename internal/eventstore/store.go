@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rkislov/cerber/internal/correlation"
 	"github.com/rkislov/cerber/internal/health"
 	"github.com/rkislov/cerber/internal/telemetry"
 	_ "modernc.org/sqlite"
@@ -29,6 +28,8 @@ var incidentsSchema string
 var lifecycleSchema string
 
 type Store struct {
+	policyMu                               sync.RWMutex
+	policyGroups                           RuleGroupSource
 	archiveUsageMu                         sync.Mutex
 	archiveUsageAt                         time.Time
 	archiveUsageBytes, archiveUsageFiles   int64
@@ -127,6 +128,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		e = s.applyPageLimit(ctx, p)
 	}
 	if e != nil {
+		db.Close()
+		return nil, e
+	}
+	if e = s.initRulePolicies(ctx); e != nil {
 		db.Close()
 		return nil, e
 	}
@@ -390,6 +395,14 @@ func (s *Store) step(ctx context.Context, stage string) error {
 			return e
 		}
 	}
+	var runtime *ruleRuntime
+	if stage == "correlator/1" {
+		policies, e := loadRulePolicies(ctx, tx)
+		if e != nil {
+			return e
+		}
+		runtime = &ruleRuntime{store: s, policies: policies, members: map[string][]string{}}
+	}
 	for _, v := range items {
 		if stage == "normalizer/1" {
 			var r telemetry.Raw
@@ -412,7 +425,7 @@ func (s *Store) step(ctx context.Context, stage string) error {
 				return e
 			}
 			if n.Status == "parsed" {
-				if e = correlate(ctx, tx, n); e != nil {
+				if e = runtime.correlate(ctx, tx, n); e != nil {
 					return e
 				}
 			}
@@ -424,76 +437,7 @@ func (s *Store) step(ctx context.Context, stage string) error {
 	}
 	return tx.Commit()
 }
-func correlate(ctx context.Context, tx *sql.Tx, n telemetry.Normalized) error {
-	failures := []telemetry.Normalized{}
-	if n.Class == "authentication" && n.User != "" && n.SourceIP != "" {
-		rows, e := tx.QueryContext(ctx, `SELECT payload FROM normalized_events WHERE class='authentication' AND status='parsed' AND outcome='failure' AND agent_id=? AND user_name=? AND source_ip=? AND event_time>=? AND event_time<=? AND sequence<=? ORDER BY event_time,sequence LIMIT 100`, n.AgentID, n.User, n.SourceIP, stamp(n.EventTime.Add(-correlation.Window)), stamp(n.EventTime), n.Sequence)
-		if e != nil {
-			return e
-		}
-		for rows.Next() {
-			var p string
-			var f telemetry.Normalized
-			if e = rows.Scan(&p); e != nil {
-				rows.Close()
-				return e
-			}
-			if e = json.Unmarshal([]byte(p), &f); e != nil {
-				rows.Close()
-				return e
-			}
-			failures = append(failures, f)
-		}
-		e = rows.Err()
-		rows.Close()
-		if e != nil {
-			return e
-		}
-	}
-	if n.Class == "firewall" || n.Class == "fess" {
-		rows, err := tx.QueryContext(ctx, `SELECT payload FROM normalized_events WHERE class=? AND status='parsed' AND ((?='syn' AND json_extract(payload,'$.action')='syn') OR (?<>'syn' AND outcome='failure')) AND agent_id=? AND source_ip=? AND json_extract(payload,'$.product')=? AND coalesce(json_extract(payload,'$.device'),'')=? AND coalesce(json_extract(payload,'$.destination_ip'),'')=? AND event_time>=? AND event_time<=? AND sequence<=? ORDER BY event_time DESC,sequence DESC LIMIT 100`, n.Class, n.Action, n.Action, n.AgentID, n.SourceIP, n.Product, n.Device, n.DestinationIP, stamp(n.EventTime.Add(-correlation.Window)), stamp(n.EventTime), n.Sequence)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var p string
-			var f telemetry.Normalized
-			if err = rows.Scan(&p); err != nil {
-				rows.Close()
-				return err
-			}
-			if err = json.Unmarshal([]byte(p), &f); err != nil {
-				rows.Close()
-				return err
-			}
-			failures = append(failures, f)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
-		}
-	}
-	d := correlation.Evaluate(n, failures)
-	if n.Class == "firewall" || n.Class == "fess" {
-		d = correlation.Network(n, failures)
-	}
-	if d == nil {
-		return nil
-	}
-	if d.Rule == "auth.repeated_failures" || n.Class == "firewall" || n.Class == "fess" {
-		var count int
-		if e := tx.QueryRowContext(ctx, "SELECT count(*) FROM detections WHERE rule=? AND agent_id=? AND user_name=? AND source_ip=? AND coalesce(json_extract(payload,'$.group_key'),'')=? AND event_time>=? AND event_time<=?", d.Rule, n.AgentID, d.User, n.SourceIP, d.GroupKey, stamp(n.EventTime.Add(-correlation.Window)), stamp(n.EventTime.Add(correlation.Window))).Scan(&count); e != nil {
-			return e
-		}
-		if count > 0 {
-			return nil
-		}
-	}
-	p, _ := json.Marshal(d)
-	_, e := tx.ExecContext(ctx, "INSERT OR IGNORE INTO detections(id,rule,agent_id,user_name,source_ip,event_time,payload) VALUES(?,?,?,?,?,?,?)", d.ID, d.Rule, d.AgentID, d.User, d.SourceIP, stamp(n.EventTime), string(p))
-	return e
-}
+
 func (s *Store) Run(ctx context.Context, onError func(error)) {
 	healthDone := make(chan struct{})
 	go func() {
