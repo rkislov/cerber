@@ -59,3 +59,10 @@ func TestSSHKeyIdentityRequiresTrustedCollectorFields(t *testing.T) {
 		t.Fatal(n)
 	}
 }
+
+func TestWindowsGUIDRejectsAdditionalHyphens(t *testing.T) {
+	fields := map[string]string{"LogonGuid": "11111111-2222-3333-4444-55--55555555"}
+	if got := windowsIdentity(fields, "node1", "Target").SessionGUID; got != "" {
+		t.Fatal("malformed GUID accepted", got)
+	}
+}

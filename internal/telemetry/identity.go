@@ -53,7 +53,7 @@ func windowsIdentity(fields map[string]string, computer, prefix string) *Identit
 	guid := strings.ToLower(strings.Trim(fields["LogonGuid"], "{}"))
 	if len(guid) == 36 && guid[8] == '-' && guid[13] == '-' && guid[18] == '-' && guid[23] == '-' {
 		raw := strings.ReplaceAll(guid, "-", "")
-		if b, e := hex.DecodeString(raw); e == nil {
+		if b, e := hex.DecodeString(raw); e == nil && len(b) == 16 {
 			nonzero := false
 			for _, v := range b {
 				nonzero = nonzero || v != 0
