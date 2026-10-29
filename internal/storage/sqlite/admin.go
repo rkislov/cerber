@@ -92,7 +92,7 @@ func (s *Store) AdminInventory(ctx context.Context, id, section string, offset, 
 			return v, err
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT e.value FROM inventories i,json_each(i.payload,?) e WHERE i.id=? AND (?=0 OR json_extract(e.value,'$.state')='available') ORDER BY CAST(e.key AS INTEGER) LIMIT ? OFFSET ?`, "$."+array, id, available, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT e.value FROM inventories i,json_each(i.payload,?) e WHERE i.id=? AND e.value IS NOT NULL AND (?=0 OR json_extract(e.value,'$.state')='available') ORDER BY CAST(e.key AS INTEGER) LIMIT ? OFFSET ?`, "$."+array, id, available, limit, offset)
 	if err != nil {
 		return v, err
 	}

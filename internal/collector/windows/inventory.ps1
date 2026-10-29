@@ -15,9 +15,13 @@ try {
     $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
     $nativeArch = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE','Machine')
     $arch = switch ($nativeArch) { 'AMD64' { 'x64' }; 'ARM64' { 'arm64' }; 'x86' { 'x86' }; default { throw 'Unknown native Windows architecture' } }
-    $osInfo = @{family='windows';name=[string]$os.Caption;version=[string]$os.Version;build=([string]$os.BuildNumber+'.'+[string]$cv.UBR);edition=[string]$cv.EditionID;architecture=$arch}
+    $osInfo = @{family='windows';name=[string]$os.Caption;version=[string]$os.Version;build=([string]$os.BuildNumber+'.'+[string]$cv.UBR);edition=[string]$cv.EditionID;architecture=$arch;release=[string]$cv.DisplayVersion;installation_type=[string]$cv.InstallationType}
     Coverage 'os' 'complete' 'Win32_OperatingSystem and CurrentVersion registry; build includes UBR'
 } catch { Coverage 'os' 'error' $_.Exception.Message }
+try {
+    $rebootInfo = New-Object -ComObject Microsoft.Update.SystemInfo
+    $osInfo.reboot_required = [bool]($rebootInfo.RebootRequired -or (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'))
+} catch { $osInfo.reboot_required = $null }
 Coverage 'packages' 'unsupported' 'Windows package-manager inventory is not implemented'
 # Registry registration is not a complete census of portable, Store and other-user applications.
 $appErrors = 0

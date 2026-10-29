@@ -9,6 +9,7 @@ test('agent actions remain visible after repeated opening with omitted optional 
  for(const id of ['agent-patches','remote-actions','agent-jobs','revoke-agent']){
   const hidden=new Set();$(id).classList={toggle(token,force){if(force===undefined){if(hidden.has(token))hidden.delete(token);else hidden.add(token)}else if(force)hidden.add(token);else hidden.delete(token)},contains:token=>hidden.has(token)};
  }
+ $("windows-tab").classList={toggle(){}};
  Object.assign(ctx,{state:{},canManageAgents:()=>true,renderEventHealth(){},meta(){},date:String,labels:{},loadInventory(){}});
  vm.runInContext(source.slice(start,end),ctx);
  for(let i=0;i<4;i++){vm.runInContext('openAgent({agent_id:"a",asset_ip:"127.0.0.1"})',ctx);for(const id of ['agent-patches','remote-actions','agent-jobs','revoke-agent'])assert.equal($(id).classList.contains('hidden'),false,id);$('detail').close()}
