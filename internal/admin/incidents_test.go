@@ -91,6 +91,16 @@ func TestIncidentAPIAnalystScopeCSRFAndHistory(t *testing.T) {
 		return u
 	}
 	analyst, reader := login("analyst"), login("reader")
+	if code, _, _ := request(session{}, "GET", "api/incident-graph?id="+telemetry.ID("unknown"), nil, false); code != 401 {
+		t.Fatal("anonymous graph", code)
+	}
+	if code, _, _ := request(reader, "GET", "api/incident-graph?id=invalid", nil, false); code != 400 {
+		t.Fatal("invalid graph id", code)
+	}
+	if code, _, _ := request(reader, "GET", "api/incident-graph?id="+telemetry.ID("unknown"), nil, false); code != 404 {
+		t.Fatal("missing graph", code)
+	}
+
 	payload := map[string]any{"action": "create", "title": "<script>fixture</script>", "severity": "high", "assignee": "analyst", "detection_id": ds[0].ID}
 	if code, _, _ := request(reader, "POST", "api/incidents", payload, true); code != 403 {
 		t.Fatal("viewer write", code)
@@ -112,6 +122,12 @@ func TestIncidentAPIAnalystScopeCSRFAndHistory(t *testing.T) {
 	if c.CreatedBy != "analyst" || c.DetectionCount != 1 {
 		t.Fatal(c)
 	}
+	for _, u := range []session{reader, analyst} {
+		if code, data, _ := request(u, "GET", "api/incident-graph?id="+c.ID, nil, false); code != 200 || !strings.Contains(string(data), `"incident_version":1`) {
+			t.Fatal("graph read", code, string(data))
+		}
+	}
+
 	if code, _, _ := request(reader, "GET", "api/incidents?id="+c.ID, nil, false); code != 200 {
 		t.Fatal("viewer read", code)
 	}
