@@ -47,7 +47,7 @@ func TestWindowsAuditClearedUsesEventlogSubjectIdentity(t *testing.T) {
 	p := map[string]any{"event_id": 1102, "time": now.Format(time.RFC3339Nano), "provider": "Microsoft-Windows-Eventlog", "fields": map[string]string{"SubjectUserName": "Alice", "SubjectDomainName": "LAB"}}
 	raw.Raw.Data, _ = json.Marshal(p)
 	n := Normalize(raw)
-	if n.Class != "audit" || n.Action != "log_cleared" || n.User != `lab\alice` || n.Parser != "windows-audit/2" {
+	if n.Class != "audit" || n.Action != "log_cleared" || n.User != `lab\alice` || n.Parser != "windows-audit/3" {
 		t.Fatal(n)
 	}
 	p["provider"] = "Unknown-Application"

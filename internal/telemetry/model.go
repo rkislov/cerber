@@ -91,6 +91,7 @@ func ValidSource(s string) bool {
 }
 
 type Normalized struct {
+	Identity        *Identity          `json:"identity,omitempty"`
 	Attack          *attack.Assessment `json:"attack,omitempty"`
 	FilePath        string             `json:"file_path,omitempty"`
 	SHA256          string             `json:"sha256,omitempty"`
@@ -126,6 +127,7 @@ type RawRecord struct {
 	Raw              Raw
 }
 type Detection struct {
+	Chain          *EventChain         `json:"chain,omitempty"`
 	Policy         *rulepolicy.Applied `json:"policy,omitempty"`
 	Attack         *attack.Assessment  `json:"attack,omitempty"`
 	GroupKey       string              `json:"group_key,omitempty"`

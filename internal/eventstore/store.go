@@ -139,6 +139,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		db.Close()
 		return nil, e
 	}
+	if e = s.ensureChainIndexes(ctx); e != nil && !errors.Is(e, telemetry.ErrStorageProtected) {
+		db.Close()
+		return nil, e
+	}
 	return s, nil
 }
 func (s *Store) Close() error  { return s.db.Close() }
@@ -346,6 +350,11 @@ func (s *Store) Step(ctx context.Context) error {
 	return nil
 }
 func (s *Store) step(ctx context.Context, stage string) error {
+	if stage == "correlator/1" {
+		if e := s.ensureChainIndexes(ctx); e != nil {
+			return e
+		}
+	}
 	tx, e := s.db.BeginTx(ctx, nil)
 	if e != nil {
 		return e
