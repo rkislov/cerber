@@ -121,11 +121,16 @@ func Open(ctx context.Context, path string) (*Store, error) {
 			return nil, e
 		}
 	}
+
 	p, e := retentionPolicy(ctx, db)
 	if e == nil {
 		e = s.applyPageLimit(ctx, p)
 	}
 	if e != nil {
+		db.Close()
+		return nil, e
+	}
+	if e = s.ensureInvestigationIndex(ctx); e != nil && !errors.Is(e, telemetry.ErrStorageProtected) {
 		db.Close()
 		return nil, e
 	}

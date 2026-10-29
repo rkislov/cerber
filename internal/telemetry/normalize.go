@@ -87,7 +87,7 @@ func Normalize(r RawRecord) Normalized {
 		n.EventTime = at.UTC()
 		n.Code = strconv.Itoa(v.EventID)
 		n.Message = v.Provider + " · " + n.Code
-		if r.Raw.Source == "windows:Security" && v.Provider == "Microsoft-Windows-Security-Auditing" {
+		if r.Raw.Source == "windows:Security" && (v.Provider == "Microsoft-Windows-Security-Auditing" || v.EventID == 1102 && v.Provider == "Microsoft-Windows-Eventlog") {
 			switch v.EventID {
 			case 4624, 4625:
 				n.Class = "authentication"
@@ -102,6 +102,11 @@ func Normalize(r RawRecord) Normalized {
 				}
 				n.SourceIP = v.Fields["IpAddress"]
 			case 1102:
+				n.Parser = "windows-audit/2"
+				n.User = v.Fields["SubjectUserName"]
+				if domain := v.Fields["SubjectDomainName"]; domain != "" && domain != "-" && n.User != "" {
+					n.User = domain + `\` + n.User
+				}
 				n.Class = "audit"
 				n.Action = "log_cleared"
 				n.Outcome = "success"

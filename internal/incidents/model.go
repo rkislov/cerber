@@ -28,17 +28,18 @@ type Card struct {
 	DetectionCount int       `json:"detection_count"`
 }
 type Command struct {
-	Action      string `json:"action"`
-	ID          string `json:"id,omitempty"`
-	Version     int    `json:"version,omitempty"`
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-	Severity    string `json:"severity,omitempty"`
-	Assignee    string `json:"assignee,omitempty"`
-	State       string `json:"state,omitempty"`
-	Outcome     string `json:"outcome,omitempty"`
-	Text        string `json:"text,omitempty"`
-	DetectionID string `json:"detection_id,omitempty"`
+	DetectionIDs []string `json:"detection_ids,omitempty"`
+	Action       string   `json:"action"`
+	ID           string   `json:"id,omitempty"`
+	Version      int      `json:"version,omitempty"`
+	Title        string   `json:"title,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	Severity     string   `json:"severity,omitempty"`
+	Assignee     string   `json:"assignee,omitempty"`
+	State        string   `json:"state,omitempty"`
+	Outcome      string   `json:"outcome,omitempty"`
+	Text         string   `json:"text,omitempty"`
+	DetectionID  string   `json:"detection_id,omitempty"`
 }
 type Entry struct {
 	Sequence int64     `json:"sequence"`
