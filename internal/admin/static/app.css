@@ -35,3 +35,27 @@
 dialog .detail-header{position:sticky;top:0;z-index:2;background:white;gap:16px}
 dialog .detail-header>div,dialog .detail-header>h2{min-width:0;overflow-wrap:anywhere}
 dialog .detail-header .icon-button{flex:0 0 36px;align-self:flex-start}
+
+/* Correlation policy editor: keep long labels and exclusion lists readable. */
+#rule-policies-section .panel{margin-bottom:24px}
+#rule-policies-section .incident-content{min-width:0}
+#rule-policies-section label{display:flex;flex-direction:column;gap:8px;font-size:13px;font-weight:600;line-height:1.5;color:var(--muted,#65768c)}
+#rule-policies-section input:not([type=checkbox]),#rule-policies-section textarea,#rule-policies-section select{width:100%;box-sizing:border-box;min-width:0;font:inherit;color:var(--ink,#1c2d42);border:1px solid #dbe3ed;border-radius:6px;background:#fff;padding:10px 12px}
+#rule-policies-section textarea{resize:vertical;min-height:82px}
+#rule-policies-section input:disabled{background:#f4f6f9}
+#rule-select{max-width:620px;margin:8px 0 4px}
+#rule-policy-fields{border:0;padding:0;margin:20px 0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 24px}
+#rule-policy-fields .secret-clear{flex-direction:row;align-items:center;grid-column:1/-1;color:var(--ink,#1c2d42);gap:10px}
+#rule-policy-fields input[type=checkbox],#rule-event-picker input[type=checkbox]{width:18px;height:18px;flex:0 0 auto;accent-color:#19897d;margin:0}
+#rule-policy-fields .candidate-search,#rule-policy-fields>p,#rule-policy-fields>label:last-child{grid-column:1/-1}
+#rule-policy-fields .candidate-search{padding:0;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+#rule-policy-fields .candidate-search select{flex:1 1 280px}
+#rule-policies-section .search-actions{display:flex;flex-wrap:wrap;gap:12px;margin:18px 0}
+#rule-preview-form{display:flex;flex-direction:column;gap:16px;margin:20px 0;align-items:stretch}
+#rule-preview-form button{align-self:flex-start}
+#rule-test-events{font-family:ui-monospace,monospace!important;min-height:125px}
+#rule-event-picker .secret-clear{flex-direction:row;align-items:flex-start;gap:12px;margin:12px 0;overflow-wrap:anywhere;font-weight:400}
+#rule-policies-section .network-vulnerability{margin:12px 0;padding:16px;border:1px solid #e2e8f0;border-radius:8px}
+#rule-policies-section summary{cursor:pointer;line-height:1.6;overflow-wrap:anywhere}
+#rule-policy-status{color:#16846e}
+@media(max-width:760px){#rule-policy-fields{grid-template-columns:minmax(0,1fr)}#rule-policies-section .search-actions .button{width:100%}}
