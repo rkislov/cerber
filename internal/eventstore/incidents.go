@@ -92,6 +92,17 @@ func (s *Store) IncidentCommand(ctx context.Context, c incidents.Command, actor 
 		if c.Text == "" || !incidentText(c.Text, 8192, true) {
 			return out, incidents.ErrInvalid
 		}
+	case "link_many":
+		if len(c.DetectionIDs) < 1 || len(c.DetectionIDs) > 20 || c.DetectionID != "" || c.Text == "" || !incidentText(c.Text, 4096, true) {
+			return out, incidents.ErrInvalid
+		}
+		seen := map[string]bool{}
+		for _, id := range c.DetectionIDs {
+			if !telemetry.Identifier(id) || seen[id] {
+				return out, incidents.ErrInvalid
+			}
+			seen[id] = true
+		}
 	case "link", "unlink":
 		if !telemetry.Identifier(c.DetectionID) || c.Action == "unlink" && (c.Text == "" || !incidentText(c.Text, 8192, true)) {
 			return out, incidents.ErrInvalid
@@ -184,6 +195,15 @@ func (s *Store) IncidentCommand(ctx context.Context, c incidents.Command, actor 
 		}
 		_, e = tx.ExecContext(ctx, "UPDATE incidents SET state=?,resolution=?,outcome=? WHERE id=?", c.State, resolution, outcome, id)
 		entry = fmt.Sprintf("%s → %s · %s\n%s", prior.State, c.State, c.Outcome, c.Text)
+	case "link_many":
+		for _, detectionID := range c.DetectionIDs {
+			c.DetectionID = detectionID
+			if e = link(); e != nil {
+				return out, e
+			}
+		}
+		payload, _ := json.Marshal(map[string]any{"detection_ids": c.DetectionIDs, "reason": c.Text})
+		entry = string(payload)
 	case "link":
 		e = link()
 		entry = c.DetectionID

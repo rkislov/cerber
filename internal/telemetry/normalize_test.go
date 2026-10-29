@@ -40,3 +40,25 @@ func TestExtremeTimestampDoesNotPoisonPipeline(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestWindowsAuditClearedUsesEventlogSubjectIdentity(t *testing.T) {
+	now := time.Now().UTC()
+	raw := RawRecord{AgentID: ID("agent"), AssetID: "asset", ReceivedAt: now, Raw: Raw{ID: ID("audit"), Source: "windows:Security", ObservedAt: now}}
+	p := map[string]any{"event_id": 1102, "time": now.Format(time.RFC3339Nano), "provider": "Microsoft-Windows-Eventlog", "fields": map[string]string{"SubjectUserName": "Alice", "SubjectDomainName": "LAB"}}
+	raw.Raw.Data, _ = json.Marshal(p)
+	n := Normalize(raw)
+	if n.Class != "audit" || n.Action != "log_cleared" || n.User != `lab\alice` || n.Parser != "windows-audit/2" {
+		t.Fatal(n)
+	}
+	p["provider"] = "Unknown-Application"
+	raw.Raw.Data, _ = json.Marshal(p)
+	if n = Normalize(raw); n.Class == "audit" {
+		t.Fatal("untrusted provider became audit clearing", n)
+	}
+	p["provider"] = "Microsoft-Windows-Eventlog"
+	p["event_id"] = 4624
+	raw.Raw.Data, _ = json.Marshal(p)
+	if n = Normalize(raw); n.Class == "authentication" {
+		t.Fatal("Eventlog logon provider spoofed", n)
+	}
+}

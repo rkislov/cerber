@@ -136,6 +136,21 @@ func TestIncidentAPIAnalystScopeCSRFAndHistory(t *testing.T) {
 	if code, data, _ = request(reader, "GET", "api/incidents/history?id="+c.ID, nil, false); code != 200 || !strings.Contains(string(data), "Investigating") {
 		t.Fatal("case history", code, string(data))
 	}
+	if code, _, _ := request(session{}, "GET", "api/investigation?incident="+c.ID, nil, false); code != 401 {
+		t.Fatal("unauthenticated investigation", code)
+	}
+	if code, data, _ := request(reader, "GET", "api/investigation?incident="+c.ID, nil, false); code != 200 || !strings.Contains(string(data), "hypotheses") {
+		t.Fatal("investigation read", code, string(data))
+	}
+	if code, _, _ := request(analyst, "GET", "api/investigation?incident="+c.ID+"&detection="+ds[0].ID, nil, false); code != 400 {
+		t.Fatal("ambiguous anchor", code)
+	}
+	if code, _, _ := request(analyst, "POST", "api/investigation", nil, true); code != 403 && code != 405 {
+		t.Fatal("investigation writes allowed", code)
+	}
+	if code, _, _ := request(reader, "POST", "api/incidents", map[string]any{"action": "link_many", "id": c.ID, "version": c.Version, "detection_ids": []string{ds[0].ID}, "text": "fixture"}, true); code != 403 {
+		t.Fatal("viewer bulk write", code)
+	}
 	if e = control.AdminCommand(ctx, admin.Command{Action: "user.update", Username: "analyst", Role: "analyst", Disabled: true}); e != nil {
 		t.Fatal(e)
 	}
