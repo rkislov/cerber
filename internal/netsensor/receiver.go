@@ -36,6 +36,14 @@ import (
 const maxMessage = 12000
 
 type Receiver struct {
+	localInputs, activeInputs                                          []Input
+	configured                                                         bool
+	flowCtx                                                            context.Context
+	flowSockets                                                        map[string]*flowSocket
+	flowWG                                                             sync.WaitGroup
+	flowReady                                                          bool
+	flowFailure                                                        func(error)
+	configErrorInput                                                   string
 	controlMu                                                          sync.RWMutex
 	metricsMu                                                          sync.Mutex
 	metrics                                                            map[string]*inputMetrics
@@ -364,6 +372,9 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 	var files []eventcollector.Source
 	for _, input := range c.Inputs {
 		i := input
+		if sensorstate.Flow(i.Format) {
+			continue
+		}
 		r.states[i.Source()] = telemetry.SourceHealth{Source: i.Source(), State: "not_attempted"}
 		if i.Protocol == "file" {
 			files = append(files, eventcollector.LineFile{Path: i.Path, Source: i.Source(), Identity: i.ID, Encode: func(line string) ([]byte, error) {
@@ -401,8 +412,25 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 		closers = append(closers, listener)
 		workers = append(workers, func() error { return r.serveStream(ctx, listener, i) })
 	}
-	// Startup is atomic: bind every configured listener before starting delivery.
-	errCh := make(chan error, len(workers))
+	// Non-flow listeners bind locally; flow listeners reconcile centrally.
+	errCh := make(chan error, 16)
+	failure := func(e error) {
+		select {
+		case errCh <- e:
+		default:
+		}
+		cancel()
+	}
+	if e = r.startFlows(ctx, failure); e != nil {
+		if r.policy.Revision == 0 {
+			r.stopFlows()
+			return e
+		}
+		// A cached managed bind may become unavailable after restart. Keep the
+		// control channel alive so an administrator can repair/remove it remotely.
+		fmt.Fprintln(log, "sensor cached flow listener could not be opened; waiting for policy repair")
+	}
+	defer r.stopFlows()
 	var wg sync.WaitGroup
 	for _, w := range workers {
 		wg.Add(1)
@@ -410,8 +438,7 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 			defer wg.Done()
 			e := w()
 			if e != nil {
-				errCh <- e
-				cancel()
+				failure(e)
 			}
 		}()
 	}
@@ -441,7 +468,7 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 			}
 		}
 		r.mu.Unlock()
-		h.Enabled = true
+		h.Enabled = len(h.Sources) > 0
 		r.metricsMu.Lock()
 		for _, i := range c.Inputs {
 			if i.Protocol == "file" {

@@ -51,9 +51,17 @@ func (r *Receiver) configure(c Config) error {
 	sum := sha256.Sum256(data)
 	r.fingerprint = hex.EncodeToString(sum[:])
 	r.policyPath = c.Spool + ".sensor-policy.json"
+	r.localInputs = append([]Input(nil), c.Inputs...)
+	var resolveErr error
+	r.activeInputs, resolveErr = resolveInputs(c.Inputs, sensorstate.Policy{})
+	if resolveErr != nil {
+		return resolveErr
+	}
+	r.configured = true
 	r.metricsMu.Lock()
-	for _, i := range c.Inputs {
+	for _, i := range r.activeInputs {
 		r.metrics[i.ID] = &inputMetrics{status: statusInput(i)}
+		r.states[i.Source()] = telemetry.SourceHealth{Source: i.Source(), State: "not_attempted"}
 	}
 	r.metricsMu.Unlock()
 	b, e := os.ReadFile(r.policyPath)
@@ -78,7 +86,7 @@ func (r *Receiver) applyPolicy(p sensorstate.Policy, persist bool) error {
 	if p.Revision < 1 {
 		return sensorstate.ErrInvalid
 	}
-	if p.Revision <= r.policy.Revision {
+	if p.Revision < r.policy.Revision || p.Revision == r.policy.Revision && (r.flowCtx == nil || r.flowReady) {
 		return nil
 	}
 	p.Inputs = append([]sensorstate.Control(nil), p.Inputs...)
@@ -87,13 +95,28 @@ func (r *Receiver) applyPolicy(p sensorstate.Policy, persist bool) error {
 	}
 	r.metricsMu.Lock()
 	defer r.metricsMu.Unlock()
-	status := []sensorstate.Input{}
-	for _, m := range r.metrics {
-		status = append(status, m.status)
+	base := r.localInputs
+	if !r.configured {
+		for _, m := range r.metrics {
+			v := m.status
+			base = append(base, Input{ID: v.ID, Format: v.Format, Protocol: v.Protocol, Listen: v.Listen, Allow: v.Allow, TemplateTTLSeconds: v.TemplateTTLSeconds})
+		}
 	}
-	if p.Revision < 1 || sensorstate.Match(p.Inputs, status) != nil || p.UpdatedAt.IsZero() {
+	next, e := resolveInputs(base, p)
+	if e != nil || p.UpdatedAt.IsZero() {
 		r.configError = "policy_invalid"
+		r.configErrorInput = ""
 		return sensorstate.ErrInvalid
+	}
+	var pending map[string]*flowSocket
+	if r.flowCtx != nil {
+		var id string
+		pending, id, e = r.prepareFlows(next)
+		if e != nil {
+			r.configError = "policy_bind_failed"
+			r.configErrorInput = id
+			return e
+		}
 	}
 	if persist {
 		b, e := json.Marshal(cachedPolicy{r.agent, r.fingerprint, p})
@@ -101,30 +124,67 @@ func (r *Receiver) applyPolicy(p sensorstate.Policy, persist bool) error {
 			e = writePolicy(r.policyPath, b)
 		}
 		if e != nil {
+			for _, socket := range pending {
+				socket.close()
+			}
+			r.configErrorInput = ""
 			r.configError = "policy_persist_failed"
 			return e
 		}
 	}
-	// Replacements restore omitted input overrides to local settings in effective().
-	for id, m := range r.metrics {
-		var oldControl, newControl *sensorstate.Control
-		for k := range r.policy.Inputs {
-			if r.policy.Inputs[k].ID == id {
-				oldControl = &r.policy.Inputs[k]
+	// Admission and routes switch under one lock, after durable persistence.
+	desired := map[string]bool{}
+	for _, input := range next {
+		id := input.ID
+		desired[id] = true
+		m := r.metrics[id]
+		if m == nil {
+			r.metrics[id] = &inputMetrics{status: statusInput(input)}
+			continue
+		}
+		var oldInput *Input
+		for k := range r.activeInputs {
+			if r.activeInputs[k].ID == id {
+				oldInput = &r.activeInputs[k]
+				break
 			}
 		}
-		for k := range p.Inputs {
-			if p.Inputs[k].ID == id {
-				newControl = &p.Inputs[k]
-			}
-		}
-		if !reflect.DeepEqual(oldControl, newControl) {
+		if oldInput == nil || !reflect.DeepEqual(*oldInput, input) || r.enabled(id) != policyEnabled(p, id) {
 			r.flows.ForgetInput(id)
 			m.status.State = "listening"
+			m.status.Format = input.Format
+			m.status.Protocol = input.Protocol
+			m.status.Listen = input.Listen
 		}
 	}
+	for id := range r.metrics {
+		if !desired[id] {
+			delete(r.metrics, id)
+			r.flows.ForgetInput(id)
+		}
+	}
+	r.activeInputs = next
 	r.policy = p
 	r.configError = ""
+	r.configErrorInput = ""
+	r.mu.Lock()
+	sources := map[string]bool{}
+	for _, input := range next {
+		sources[input.Source()] = true
+		if _, ok := r.states[input.Source()]; !ok {
+			r.states[input.Source()] = telemetry.SourceHealth{Source: input.Source(), State: "not_attempted"}
+		}
+	}
+	for name := range r.states {
+		if !sources[name] {
+			delete(r.states, name)
+		}
+	}
+	r.mu.Unlock()
+	if r.flowCtx != nil {
+		r.commitFlows(next, pending)
+	}
+
 	return nil
 }
 func writePolicy(path string, b []byte) error {
@@ -149,7 +209,23 @@ func writePolicy(path string, b []byte) error {
 	}
 	return publishPolicy(name, path)
 }
+func policyEnabled(p sensorstate.Policy, id string) bool {
+	for _, c := range p.Inputs {
+		if c.ID == id {
+			return !c.Removed && c.Enabled
+		}
+	}
+	return true
+}
 func (r *Receiver) effective(i Input) (Input, bool) {
+	if r.configured {
+		for _, active := range r.activeInputs {
+			if active.ID == i.ID {
+				return active, r.enabled(i.ID)
+			}
+		}
+		return i, false
+	}
 	for _, p := range r.policy.Inputs {
 		if p.ID == i.ID {
 			i.Allow = append([]string(nil), p.Allow...)
@@ -162,6 +238,9 @@ func (r *Receiver) effective(i Input) (Input, bool) {
 func (r *Receiver) receive(ctx context.Context, i Input, peer netip.AddrPort, data []byte) error {
 	r.controlMu.RLock()
 	defer r.controlMu.RUnlock()
+	return r.receiveLocked(ctx, i, peer, data)
+}
+func (r *Receiver) receiveLocked(ctx context.Context, i Input, peer netip.AddrPort, data []byte) error {
 	i, enabled := r.effective(i)
 	code := ""
 	if !enabled {
@@ -273,7 +352,13 @@ func (r *Receiver) snapshot(inputs []Input) sensorstate.Status {
 	r.metricsMu.Lock()
 	defer r.metricsMu.Unlock()
 	now := time.Now().UTC()
-	s := sensorstate.Status{StartedAt: r.started, ObservedAt: now, SampleSeconds: now.Sub(r.sampleAt).Seconds(), AppliedRevision: r.policy.Revision, ConfigError: r.configError, Inputs: []sensorstate.Input{}}
+	if r.configured {
+		inputs = r.activeInputs
+	}
+	s := sensorstate.Status{InputManagement: 1, BaseInputs: definitions(r.localInputs), ConfigErrorInput: r.configErrorInput, StartedAt: r.started, ObservedAt: now, SampleSeconds: now.Sub(r.sampleAt).Seconds(), AppliedRevision: r.policy.Revision, ConfigError: r.configError, Inputs: []sensorstate.Input{}}
+	if r.flowCtx != nil && !r.flowReady {
+		s.AppliedRevision = 0
+	}
 	for _, local := range inputs {
 		m := r.metrics[local.ID]
 		if m == nil {
@@ -294,6 +379,12 @@ func (r *Receiver) snapshot(inputs []Input) sensorstate.Status {
 		i.Allow = statusInput(effective).Allow
 		i.TemplateTTLSeconds = statusInput(effective).TemplateTTLSeconds
 		i.Enabled = enabled
+		if r.flowCtx != nil && sensorstate.Flow(i.Format) && r.flowSockets[i.Listen] == nil {
+			i.State = "error"
+			i.LastError = "listener_unavailable"
+			at := now
+			i.LastErrorAt = &at
+		}
 		if !enabled {
 			i.State = "paused"
 		}

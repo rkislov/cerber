@@ -65,7 +65,7 @@ func (s *Store) ChangeSensorPolicy(ctx context.Context, c sensorstate.Change) (s
 	if json.Unmarshal([]byte(payload), &h) != nil || h.Sensor == nil {
 		return p, sensorstate.ErrNotFound
 	}
-	if e = sensorstate.Match(c.Inputs, h.Sensor.Inputs); e != nil {
+	if e = sensorstate.MatchStatus(c.Inputs, *h.Sensor); e != nil {
 		return p, e
 	}
 	old, e := sensorPolicy(ctx, tx, c.AgentID)
