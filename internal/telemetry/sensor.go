@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/rkislov/cerber/internal/flowexport"
+	"github.com/rkislov/cerber/internal/sflow"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -28,6 +29,12 @@ type SensorEnvelope struct {
 }
 
 type NetworkObservation struct {
+	Sampled           bool       `json:"sampled,omitempty"`
+	ReportedAgent     string     `json:"reported_agent,omitempty"`
+	SamplePool        uint32     `json:"sample_pool,omitempty"`
+	SampleDrops       uint32     `json:"sample_drops,omitempty"`
+	SourceIndex       uint32     `json:"source_index,omitempty"`
+	SourceType        uint32     `json:"source_type,omitempty"`
 	ExporterPort      uint16     `json:"exporter_port,omitempty"`
 	ObservationDomain uint32     `json:"observation_domain,omitempty"`
 	TemplateID        uint16     `json:"template_id,omitempty"`
@@ -93,7 +100,48 @@ func normalizeSensor(r RawRecord, n Normalized) Normalized {
 	}
 	n.Network = &NetworkObservation{Kind: v.Profile, Input: v.Input, Exporter: v.Peer, Transport: v.Transport, TimeBasis: "sensor_receive_time"}
 	n.Device = v.Peer
-	if r.Raw.Source == "network:netflow" && (v.Profile == "netflow9" || v.Profile == "ipfix") {
+	if r.Raw.Source == "network:netflow" && v.Profile == "sflow5" {
+		if v.Transport != "udp" || v.PeerPort == 0 {
+			return bad()
+		}
+		samples, e := sflow.Decode(v.Packet)
+		if e != nil || v.Record < 0 || v.Record >= len(samples) {
+			return bad()
+		}
+		f := samples[v.Record]
+		o := n.Network
+		o.Sampled = true
+		o.ReportedAgent = f.Agent
+		o.ExporterPort = v.PeerPort
+		o.ObservationDomain = f.SubAgent
+		o.ExportSequence = f.Sequence
+		o.SourceIndex = f.SourceIndex
+		o.SourceType = f.SourceType
+		o.SamplePool = f.Pool
+		o.SampleDrops = f.Drops
+		o.SamplingInterval = int(f.Rate)
+		o.SourcePort = f.SourcePort
+		o.Protocol = f.Protocol
+		if f.InputFormat == 0 && f.Input != 0x3fffffff {
+			o.InputInterface = int(f.Input)
+		}
+		if f.OutputFormat == 0 && f.Output != 0x3fffffff {
+			o.OutputInterface = int(f.Output)
+		}
+		n.Product = "sFlow v5"
+		n.Action = "flow_metadata"
+		n.Message = "sFlow sample metadata; unsupported records retained in original datagram"
+		if f.Source != "" && f.Destination != "" {
+			n.SourceIP = f.Source
+			n.DestinationIP = f.Destination
+			n.DestinationPort = f.DestinationPort
+			n.Class = "network_flow"
+			n.Action = "flow_observed"
+			o.Packets = 1
+			o.Bytes = uint64(f.Length)
+			n.Message = "Sampled packet observation; counts are not extrapolated"
+		}
+	} else if r.Raw.Source == "network:netflow" && (v.Profile == "netflow9" || v.Profile == "ipfix") {
 		if v.Transport != "udp" || v.PeerPort == 0 || v.Flow == nil {
 			return bad()
 		}

@@ -1501,7 +1501,7 @@ Audit Filtering Platform Connection и аудит создания/заверш�
 
 ### Отдельный сетевой сенсор
 
-`cmd/cerber-sensor` принимает Syslog устройств, NetFlow v5/v9, IPFIX (UDP) и Suricata EVE,
+`cmd/cerber-sensor` принимает Syslog устройств, NetFlow v5/v9, IPFIX, sFlow v5 (UDP) и Suricata EVE,
 доставляет их через собственную ограниченную очередь. В админке доступны новые
 источники/классы; TCP-наблюдения дополняют граф инцидента при точном совпадении
 адресов, портов и времени с WFP. Сенсор обозначен как наблюдатель, без

@@ -54,7 +54,7 @@ func Load(path string) (Config, error) {
 }
 func (i Input) Source() string {
 	switch i.Format {
-	case "netflow5", "netflow9", "ipfix":
+	case "netflow5", "netflow9", "ipfix", "sflow5":
 		return "network:netflow"
 	case "suricata":
 		return "network:suricata"
@@ -75,7 +75,7 @@ func (c Config) Validate() error {
 		}
 		seen[i.ID] = true
 		switch i.Format {
-		case "syslog", "cef-firewall", "cef-fess", "netflow5", "netflow9", "ipfix", "suricata":
+		case "syslog", "cef-firewall", "cef-fess", "netflow5", "netflow9", "ipfix", "sflow5", "suricata":
 		default:
 			return fmt.Errorf("unsupported input format")
 		}
@@ -95,7 +95,7 @@ func (c Config) Validate() error {
 		if i.Protocol != "udp" && i.Protocol != "tcp" && i.Protocol != "tls" {
 			return fmt.Errorf("unsupported transport")
 		}
-		if (i.Format == "netflow5" || i.Format == "netflow9" || i.Format == "ipfix") && i.Protocol != "udp" || i.Format == "suricata" && i.Protocol == "udp" {
+		if (i.Format == "sflow5" || i.Format == "netflow5" || i.Format == "netflow9" || i.Format == "ipfix") && i.Protocol != "udp" || i.Format == "suricata" && i.Protocol == "udp" {
 			return fmt.Errorf("incompatible format and transport")
 		}
 		addr, e := netip.ParseAddrPort(i.Listen)

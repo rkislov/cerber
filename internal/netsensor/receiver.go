@@ -30,6 +30,7 @@ import (
 	"github.com/rkislov/cerber/internal/flowexport"
 	"github.com/rkislov/cerber/internal/ingest"
 	"github.com/rkislov/cerber/internal/sensorstate"
+	"github.com/rkislov/cerber/internal/sflow"
 	"github.com/rkislov/cerber/internal/telemetry"
 )
 
@@ -123,6 +124,17 @@ func (r *Receiver) accept(ctx context.Context, i Input, peer string, data []byte
 		}
 		v.PeerPort = ports[0]
 		count = len(decoded.Records)
+	} else if i.Format == "sflow5" {
+		if port == 0 {
+			return fail(telemetry.ErrInvalid)
+		}
+		samples, e := sflow.Decode(data)
+		if e != nil {
+			return fail(e)
+		}
+		v.Packet = data
+		v.PeerPort = port
+		count = len(samples)
 	} else if i.Format == "netflow5" {
 		flows, e := telemetry.DecodeNetFlow5(data)
 		if e != nil {
@@ -378,9 +390,9 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 		}
 		r.states[i.Source()] = telemetry.SourceHealth{Source: i.Source(), State: "not_attempted"}
 		if i.Protocol == "file" {
-			files = append(files, eventcollector.LineFile{Path: i.Path, Source: i.Source(), Identity: i.ID, Encode: func(line string) ([]byte, error) {
+			files = append(files, eventcollector.RotatingLineFile{LineFile: eventcollector.LineFile{Path: i.Path, Source: i.Source(), Identity: i.ID, Encode: func(line string) ([]byte, error) {
 				return json.Marshal(telemetry.SensorEnvelope{Input: i.ID, Peer: "local", Transport: "file", Profile: "suricata", Line: line})
-			}})
+			}}})
 			continue
 		}
 		if i.Protocol == "udp" {
