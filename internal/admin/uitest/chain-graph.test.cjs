@@ -63,3 +63,7 @@ test('older chain snapshots can merge missing code/outcome enrichment without fa
  const a=step(1),newer={...a,code:'4624',outcome:'success',identity:{...a.identity,account_ref:'lab\\alice'}};const d=detection([newer]);d.chain.version=2;
  const m=model([detection([a]),d]);assert.equal(m.conflicts,0);assert.equal(m.events.length,1);assert.equal(m.events[0].code,'4624');
 });
+
+test('directory observations remain separate from immutable source facts across saved chains',()=>{
+ const a=step(1),b=step(2,'b');a.identity.directory={state:'verified',sid:'S-1-5-21-1-2-3-1001',checked_at:'2026-10-30T05:00:00Z'};const later={...a,identity:{...a.identity,directory:{state:'disabled',sid:a.identity.directory.sid,checked_at:'2026-10-30T06:00:00Z'}}};const m=model([detection([a,b]),detection([later,b])]);assert.equal(m.conflicts,0);assert.equal(m.events.length,2);assert.equal(m.events[0].directory_observations.length,2);const ctx=vm.createContext({});vm.runInContext(source,ctx);const facts=ctx.chainWindowsFacts(m.events[0]);assert.ok(facts.some(([,v])=>v==='Подтверждена'));assert.ok(facts.some(([,v])=>v==='Отключена'));
+});

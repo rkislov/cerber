@@ -4,13 +4,14 @@ package admin
 import (
 	"context"
 	"errors"
+	"github.com/rkislov/cerber/internal/directory"
 	"github.com/rkislov/cerber/internal/integrations"
 	"net/http"
 	"time"
 )
 
 func integrationManagement(store *integrations.Store, w http.ResponseWriter, r *http.Request, user User, slots chan struct{}, workers ...*integrations.Worker) bool {
-	if r.URL.Path != "/admin/api/settings/runtime" && r.URL.Path != "/admin/api/settings/sync-threatfox" && r.URL.Path != "/admin/api/settings" && r.URL.Path != "/admin/api/settings/test-smtp" && r.URL.Path != "/admin/api/settings/test-threatfox" {
+	if r.URL.Path != "/admin/api/settings/check-directory-account" && r.URL.Path != "/admin/api/settings/test-directory" && r.URL.Path != "/admin/api/settings/runtime" && r.URL.Path != "/admin/api/settings/sync-threatfox" && r.URL.Path != "/admin/api/settings" && r.URL.Path != "/admin/api/settings/test-smtp" && r.URL.Path != "/admin/api/settings/test-threatfox" {
 		return false
 	}
 	if user.Role != "administrator" || user.Username == "" {
@@ -60,7 +61,7 @@ func integrationManagement(store *integrations.Store, w http.ResponseWriter, r *
 			return true
 		}
 		var c integrations.Command
-		if !decodeJSON(w, r, 16384, &c) {
+		if !decodeJSON(w, r, 32768, &c) {
 			return true
 		}
 		if e := store.Save(c, user.Username); e != nil {
@@ -93,6 +94,28 @@ func integrationManagement(store *integrations.Store, w http.ResponseWriter, r *
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
+	if r.URL.Path == "/admin/api/settings/check-directory-account" {
+		var q directory.Query
+		if !decodeJSON(w, r, 2048, &q) {
+			return true
+		}
+		p, e := directory.Check(ctx, store.DirectoryConfig(), q)
+		if e != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": e.Error()})
+		} else {
+			writeJSON(w, map[string]any{"ok": p.State == "verified", "message": p.State, "account": p})
+		}
+		return true
+	}
+	if r.URL.Path == "/admin/api/settings/test-directory" {
+		d, e := store.ProbeDirectory(ctx)
+		if e != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": e.Error()})
+		} else {
+			writeJSON(w, map[string]any{"ok": true, "message": "Домен подтверждён: " + d.NetBIOS + " ↔ " + d.DNS + " · " + d.SID, "domain": d})
+		}
+		return true
+	}
 	var e error
 	if r.URL.Path == "/admin/api/settings/test-smtp" {
 		e = store.ProbeSMTP(ctx)

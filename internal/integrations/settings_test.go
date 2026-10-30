@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rkislov/cerber/internal/directory"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -116,5 +118,50 @@ func TestSMTPRefusesServerWithoutTLSBeforeAuth(t *testing.T) {
 	}
 	if line := <-done; strings.Contains(line, "AUTH") {
 		t.Fatal("credentials sent before TLS")
+	}
+}
+
+func TestDirectorySettingsEncryptedIndependentAndRedacted(t *testing.T) {
+	d := t.TempDir()
+	key := filepath.Join(d, "key")
+	path := filepath.Join(d, "settings")
+	os.WriteFile(key, bytes.Repeat([]byte{7}, 32), 0600)
+	s, e := Open(path, key)
+	if e != nil {
+		t.Fatal(e)
+	}
+	pass := "directory-secret-fixture"
+	cfg := directory.Config{Enabled: true, URL: "ldaps://dc.example.org", BaseDN: "DC=example,DC=org", BindDN: "svc@example.org"}
+	before := s.snapshot()
+	if e = s.Save(Command{Version: 1, Scope: "directory", Directory: cfg, DirectoryPassword: &pass}, "roman"); e != nil {
+		t.Fatal(e)
+	}
+	if !reflect.DeepEqual(s.snapshot().SMTP, before.SMTP) {
+		t.Fatal("AD save changed SMTP")
+	}
+	b, _ := os.ReadFile(path)
+	v, _ := json.Marshal(s.View())
+	if bytes.Contains(b, []byte(pass)) || bytes.Contains(v, []byte(pass)) || !s.View().DirectoryPasswordSet {
+		t.Fatal("secret leak")
+	}
+	s, e = Open(path, key)
+	if e != nil || s.DirectoryConfig().Password != pass {
+		t.Fatal("reload", e)
+	}
+	if e = s.Save(Command{Version: 2, Scope: "smtp", SMTP: s.View().SMTP}, "roman"); e != nil || s.DirectoryConfig().Password != pass || s.DirectoryConfig().URL != cfg.URL {
+		t.Fatal("SMTP save changed AD", e)
+	}
+	if e = s.Save(Command{Version: 3, Scope: "directory", Directory: cfg}, "roman"); e != nil || s.DirectoryConfig().Password != pass {
+		t.Fatal("empty password not preserved", e)
+	}
+	if e = s.Save(Command{Version: 4, Scope: "directory", Directory: cfg, ClearDirectoryPassword: true}, "roman"); e == nil {
+		t.Fatal("enabled empty service password accepted")
+	}
+	cfg.Enabled = false
+	if e = s.Save(Command{Version: 4, Scope: "directory", Directory: cfg, ClearDirectoryPassword: true}, "roman"); e != nil || s.View().DirectoryPasswordSet {
+		t.Fatal("clear disabled secret", e)
+	}
+	if e = s.Save(Command{Version: 5, Scope: "smtp", SMTP: s.View().SMTP, Directory: cfg}, "roman"); !errors.Is(e, ErrInvalid) {
+		t.Fatal("cross-scope change", e)
 	}
 }

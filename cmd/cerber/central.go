@@ -14,6 +14,7 @@ import (
 	"github.com/rkislov/cerber/internal/app"
 	linuxcollector "github.com/rkislov/cerber/internal/collector/linux"
 	"github.com/rkislov/cerber/internal/collector/windows"
+	"github.com/rkislov/cerber/internal/directory"
 	"github.com/rkislov/cerber/internal/domain"
 	"github.com/rkislov/cerber/internal/endpoint"
 	"github.com/rkislov/cerber/internal/eventcollector"
@@ -193,6 +194,9 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			}
 			defer eventDB.Close()
 			eventDB.SetRuleGroupSource(store)
+			if integrationStore != nil {
+				eventDB.SetDirectory(directory.New(integrationStore.DirectoryConfig))
+			}
 			if *eventArchiveDir != "" {
 				if err = eventDB.ConfigureArchive(*eventArchiveDir); err != nil {
 					return err

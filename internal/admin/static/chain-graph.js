@@ -1,6 +1,12 @@
 "use strict";
 function chainStepTitle(step){return {explicit_credentials:"Попытка использования реквизитов",kerberos_service_ticket:step.outcome==="failure"?"Kerberos: отказ":step.outcome==="success"?"Kerberos: запрос успешен":"Запрос Kerberos-билета",log_cleared:"Очистка аудита",logon:"Успешный вход"}[step.action]||"Событие";}
-function chainWindowsFacts(step){const w=step.windows_auth||{};return [["Целевые реквизиты / пользователь билета",w.target_account],["TargetLogonGuid реквизитов",w.target_guid],["Запрошенная служба",w.service],["SID службы (не пользователя)",w.service_sid],["Статус Kerberos",w.status],["Тип шифрования билета",w.encryption],["Сервер из 4648",w.target_server],["Процесс инициатора",w.process],["PID процесса",w.process_id]].filter(([,v])=>v);}
+function chainWindowsSourceFacts(step){const w=step.windows_auth||{};return [["Целевые реквизиты / пользователь билета",w.target_account],["TargetLogonGuid реквизитов",w.target_guid],["Запрошенная служба",w.service],["SID службы (не пользователя)",w.service_sid],["Статус Kerberos",w.status],["Тип шифрования билета",w.encryption],["Сервер из 4648",w.target_server],["Процесс инициатора",w.process],["PID процесса",w.process_id]].filter(([,v])=>v);}
+function chainWindowsFacts(step){
+ const states={verified:"Подтверждена",pending:"Ожидает проверки",unavailable:"Каталог недоступен",unresolved:"Не подтверждена",unsupported:"Неподдерживаемая запись",foreign_domain:"Другой домен",not_found:"Не найдена",ambiguous:"Неоднозначное имя",mismatch:"Конфликт атрибутов",sid_mismatch:"SID не совпадает",disabled:"Отключена",locked:"Заблокирована",expired:"Срок действия истёк"};
+ const observations=step.directory_observations||[{role:"Учётная запись / инициатор",proof:step.identity?.directory},{role:"Целевые реквизиты / билет",proof:step.windows_auth?.directory}];
+ const out=chainWindowsSourceFacts(step);for(const {role,proof:p}of observations){if(!p)continue;out.push(["AD · "+role,states[p.state]||p.state]);if(p.checked_at&&Date.parse(p.checked_at)>0)out.push(["Проверено в каталоге",p.checked_at]);if(p.dns)out.push(["DNS / NetBIOS",p.dns+" / "+p.netbios]);if(p.sid)out.push(["SID из AD",p.sid]);if(p.object_guid)out.push(["objectGUID из AD",p.object_guid]);if(p.sam)out.push(["sAMAccountName / UPN",p.sam+" / "+(p.upn||"—")]);}
+ return out;
+}
 function chainEdgeTitle(kind){return {domain_sid:"Общий SID",logon_guid:"SID + Logon GUID",ssh_key:"Общий SSH-ключ",local_session:"Один локальный сеанс",actor_local_session:"Сеанс инициатора",kerberos_guid:"Kerberos GUID + учётка",explicit_target_guid:"Target GUID + учётка",credential_ticket_guid:"Реквизиты → билет"}[kind]||"Сохранённая связь";}
 
 
@@ -11,7 +17,7 @@ function chainGraphModel(context) {
   const limits = {events:80, links:200, hosts:20};
   let truncated = !!context.truncated, savedChains = 0;
   const hostKey = step => JSON.stringify([step.agent_id,step.asset_id]);
-  const facts = step => JSON.stringify([step.agent_id,step.asset_id,step.at,step.user,step.action,step.source_ip||"",JSON.stringify(chainWindowsFacts(step)),...["account_key","account_sid","realm","session_guid","local_session","ssh_key","computer","logon_type"].map(k=>step.identity?.[k]||"")]);
+  const facts = step => JSON.stringify([step.agent_id,step.asset_id,step.at,step.user,step.action,step.source_ip||"",JSON.stringify(chainWindowsSourceFacts(step)),...["account_key","account_sid","realm","session_guid","local_session","ssh_key","computer","logon_type"].map(k=>step.identity?.[k]||"")]);
   for (const detection of context.anchors || []) {
     const chain = detection.chain;
     if (!chain || ![1,2].includes(chain.version)) continue;
@@ -23,7 +29,8 @@ function chainGraphModel(context) {
       membership.add(step.event_id);
       const previous = events.get(step.event_id);
       if (previous && (previous.facts !== facts(step)||previous.code&&step.code&&previous.code!==step.code||previous.outcome&&step.outcome&&previous.outcome!==step.outcome)) {conflicts.add(step.event_id);continue;}
-      if (!previous) events.set(step.event_id,{...step,hostKey:hostKey(step),facts:facts(step),detections:[]});
+      if (!previous) events.set(step.event_id,{...step,hostKey:hostKey(step),facts:facts(step),detections:[],directory_observations:[]});
+      const observations=events.get(step.event_id).directory_observations;for(const [role,proof]of [["Учётная запись / инициатор",step.identity?.directory],["Целевые реквизиты / билет",step.windows_auth?.directory]]){if(proof&&!observations.some(o=>JSON.stringify(o)===JSON.stringify({role,proof})))observations.push({role,proof});}
       events.get(step.event_id).code ||= step.code;events.get(step.event_id).outcome ||= step.outcome;
       events.get(step.event_id).detections.push({id:detection.id,rule:detection.rule,revision:detection.policy?.revision||0});
     }
