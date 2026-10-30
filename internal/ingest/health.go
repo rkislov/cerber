@@ -4,6 +4,7 @@ package ingest
 import (
 	"fmt"
 	"github.com/rkislov/cerber/internal/sensorstate"
+	rules "github.com/rkislov/cerber/internal/suricatarules"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"time"
 )
@@ -92,6 +93,7 @@ func (h Heartbeat) TransitionKey() string {
 }
 
 type HeartbeatReceipt struct {
+	Suricata     *rules.Assignment   `json:"suricata,omitempty"`
 	SensorPolicy *sensorstate.Policy `json:"sensor_policy,omitempty"`
 	AgentID      string              `json:"agent_id"`
 	ObservedAt   time.Time           `json:"observed_at"`
