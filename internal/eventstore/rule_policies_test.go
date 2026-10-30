@@ -26,7 +26,7 @@ func (f policyGroupFixture) CorrelationAgentGroups(context.Context, string) ([]s
 func policyState(t *testing.T, s *Store) string {
 	t.Helper()
 	out := map[string]any{}
-	for _, q := range []string{"SELECT count(*) FROM detections", "SELECT count(*) FROM correlation_policy_versions", "SELECT count(*) FROM correlation_chain_policy_versions", "SELECT sum(position) FROM consumer_cursors", "SELECT count(*) FROM event_retention_audit", "SELECT count(*) FROM pipeline_health_notifications"} {
+	for _, q := range []string{"SELECT count(*) FROM detections", "SELECT count(*) FROM correlation_policy_versions", "SELECT count(*) FROM correlation_chain_policy_versions", "SELECT count(*) FROM correlation_windows_policy_versions", "SELECT sum(position) FROM consumer_cursors", "SELECT count(*) FROM event_retention_audit", "SELECT count(*) FROM pipeline_health_notifications"} {
 		var v sql.NullInt64
 		if e := s.db.QueryRow(q).Scan(&v); e != nil {
 			t.Fatal(e)

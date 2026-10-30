@@ -105,6 +105,8 @@ func Normalize(r RawRecord) Normalized {
 				n.SourceIP = v.Fields["IpAddress"]
 				n.Identity = windowsIdentity(v.Fields, v.Computer, "Target")
 				n.Parser = "windows-auth/3"
+			case 4648, 4769:
+				normalizeWindowsAuth(&n, v.Fields, v.Computer, v.EventID)
 			case 1102:
 				n.Parser = "windows-audit/3"
 				n.Identity = windowsIdentity(v.Fields, v.Computer, "Subject")

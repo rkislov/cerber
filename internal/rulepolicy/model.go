@@ -56,7 +56,7 @@ type Change struct {
 
 func Defaults() map[string]Config {
 	out := map[string]Config{}
-	for id, threshold := range map[string]int{"chain.domain_account_hosts": 3, "chain.logon_guid_hosts": 2, "chain.ssh_key_hosts": 3, "chain.remote_logon_audit_clear": 2, "auth.repeated_failures": 5, "auth.success_after_failures": 5, "firewall.syn_scan": 20, "firewall.denied_burst": 20, "firewall.port_scan": 20, "fess.blocked_burst": 10, "fess.allowed_after_blocks": 5, "windows.audit_log_cleared": 1, "threatfox.ip_match": 1, "threatfox.ioc_match": 1} {
+	for id, threshold := range map[string]int{"chain.kerberos_logon": 2, "chain.explicit_credentials_logon": 2, "chain.domain_account_hosts": 3, "chain.logon_guid_hosts": 2, "chain.ssh_key_hosts": 3, "chain.remote_logon_audit_clear": 2, "auth.repeated_failures": 5, "auth.success_after_failures": 5, "firewall.syn_scan": 20, "firewall.denied_burst": 20, "firewall.port_scan": 20, "fess.blocked_burst": 10, "fess.allowed_after_blocks": 5, "windows.audit_log_cleared": 1, "threatfox.ip_match": 1, "threatfox.ioc_match": 1} {
 		window, suppression := 300, 300
 		if strings.HasPrefix(id, "chain.") {
 			window, suppression = 900, 900
@@ -101,6 +101,9 @@ func Canonical(rule string, c Config) (Config, error) {
 		return c, ErrInvalid
 	}
 	if strings.HasPrefix(rule, "chain.") && (c.Threshold < 2 || c.Threshold > 20) {
+		return c, ErrInvalid
+	}
+	if (rule == "chain.kerberos_logon" || rule == "chain.explicit_credentials_logon") && c.Threshold > 3 {
 		return c, ErrInvalid
 	}
 	lists := []*[]string{&c.GroupIDs, &c.ExcludeAgents, &c.ExcludeUsers, &c.ExcludeSourceCIDRs, &c.ExcludeDestinationCIDRs}

@@ -1,4 +1,8 @@
 "use strict";
+function chainStepTitle(step){return {explicit_credentials:"Попытка использования реквизитов",kerberos_service_ticket:step.outcome==="failure"?"Kerberos: отказ":step.outcome==="success"?"Kerberos: запрос успешен":"Запрос Kerberos-билета",log_cleared:"Очистка аудита",logon:"Успешный вход"}[step.action]||"Событие";}
+function chainWindowsFacts(step){const w=step.windows_auth||{};return [["Целевые реквизиты / пользователь билета",w.target_account],["TargetLogonGuid реквизитов",w.target_guid],["Запрошенная служба",w.service],["SID службы (не пользователя)",w.service_sid],["Статус Kerberos",w.status],["Тип шифрования билета",w.encryption],["Сервер из 4648",w.target_server],["Процесс инициатора",w.process],["PID процесса",w.process_id]].filter(([,v])=>v);}
+function chainEdgeTitle(kind){return {domain_sid:"Общий SID",logon_guid:"SID + Logon GUID",ssh_key:"Общий SSH-ключ",local_session:"Один локальный сеанс",actor_local_session:"Сеанс инициатора",kerberos_guid:"Kerberos GUID + учётка",explicit_target_guid:"Target GUID + учётка",credential_ticket_guid:"Реквизиты → билет"}[kind]||"Сохранённая связь";}
+
 
 // Display only immutable links saved by the correlator. Shared names, IPs or
 // local session numbers never manufacture new cross-host edges in the browser.
@@ -7,10 +11,10 @@ function chainGraphModel(context) {
   const limits = {events:80, links:200, hosts:20};
   let truncated = !!context.truncated, savedChains = 0;
   const hostKey = step => JSON.stringify([step.agent_id,step.asset_id]);
-  const facts = step => JSON.stringify([step.agent_id,step.asset_id,step.at,step.user,step.action,step.source_ip||"",...["account_key","account_sid","realm","session_guid","local_session","ssh_key","computer","logon_type"].map(k=>step.identity?.[k]||"")]);
+  const facts = step => JSON.stringify([step.agent_id,step.asset_id,step.at,step.user,step.action,step.source_ip||"",JSON.stringify(chainWindowsFacts(step)),...["account_key","account_sid","realm","session_guid","local_session","ssh_key","computer","logon_type"].map(k=>step.identity?.[k]||"")]);
   for (const detection of context.anchors || []) {
     const chain = detection.chain;
-    if (!chain || chain.version !== 1) continue;
+    if (!chain || ![1,2].includes(chain.version)) continue;
     savedChains++;
     truncated = truncated || !!chain.truncated;
     const membership = new Set();
@@ -18,8 +22,9 @@ function chainGraphModel(context) {
       if (!/^[a-f0-9]{64}$/.test(step.event_id) || !step.agent_id || !step.asset_id || !Number.isFinite(Date.parse(step.at))) continue;
       membership.add(step.event_id);
       const previous = events.get(step.event_id);
-      if (previous && previous.facts !== facts(step)) {conflicts.add(step.event_id);continue;}
+      if (previous && (previous.facts !== facts(step)||previous.code&&step.code&&previous.code!==step.code||previous.outcome&&step.outcome&&previous.outcome!==step.outcome)) {conflicts.add(step.event_id);continue;}
       if (!previous) events.set(step.event_id,{...step,hostKey:hostKey(step),facts:facts(step),detections:[]});
+      events.get(step.event_id).code ||= step.code;events.get(step.event_id).outcome ||= step.outcome;
       events.get(step.event_id).detections.push({id:detection.id,rule:detection.rule,revision:detection.policy?.revision||0});
     }
     for (const link of (chain.links || []).slice(0,20)) {
@@ -42,15 +47,16 @@ function chainGraphModel(context) {
   const ids = new Set(included.map(e=>e.event_id));
   const edges = [...links.values()].filter(l=>ids.has(l.from)&&ids.has(l.to)).sort((a,b)=>a.key.localeCompare(b.key));
   if (edges.length > limits.links || conflicts.size || events.size !== included.length) truncated=true;
-  const accounts = new Set(), sessions = new Set();
+  const accounts = new Set(), sessions = new Set(),sidAccounts=new Set(),nameAccounts=new Set();
   for (const step of included) {
     const i=step.identity||{};
     // A key is a credential, not a globally unique local account identity.
+    if(i.account_sid)sidAccounts.add(i.account_sid);else nameAccounts.add(JSON.stringify([step.hostKey,step.user||"unknown"]));
     accounts.add(i.account_sid ? "sid:"+i.account_sid : JSON.stringify([step.hostKey,step.user||"unknown"]));
     if (i.local_session) sessions.add(JSON.stringify([step.hostKey,i.local_session]));
     else if (i.session_guid && i.account_sid) sessions.add(JSON.stringify([step.hostKey,i.account_sid,i.session_guid]));
   }
-  return {events:included,hosts:[...hosts.values()],links:edges.slice(0,limits.links),savedChains,truncated,conflicts:conflicts.size,accounts:accounts.size,sessions:sessions.size};
+  return {events:included,hosts:[...hosts.values()],links:edges.slice(0,limits.links),savedChains,truncated,conflicts:conflicts.size,accounts:accounts.size,accountsWithSID:sidAccounts.size,accountsWithoutSID:nameAccounts.size,sessions:sessions.size};
 }
 
 function chainGraphLauncher(root, scope) {
@@ -83,7 +89,7 @@ function renderChainGraph(root,model) {
   if(model.truncated) root.append(el("p","error","Граф ограничен: до 20 опорных срабатываний, 80 событий, 20 узлов и 200 связей. Пропущенные данные не считаются отсутствующими."));
   if(model.conflicts) root.append(el("p","error","Есть несовпадающие снимки одного события: такие события и их связи исключены из графа. Проверьте исходники срабатываний."));
   if(!model.events.length) {root.append(el("p","empty","В связанных срабатываниях пока нет сохранённой межузловой цепочки. Свяжите с инцидентом срабатывание межузлового правила; совпадения имён и IP граф не объединяет автоматически."));return;}
-  root.append(el("p","graph-counts","Узлы: "+model.hosts.length+" · учётные записи: "+model.accounts+" · локальные сеансы с идентификатором: "+model.sessions+" · события: "+model.events.length+" · связи: "+model.links.length));
+  root.append(el("p","graph-counts","Узлы: "+model.hosts.length+" · учётки с SID: "+model.accountsWithSID+" · имена без SID: "+model.accountsWithoutSID+" · локальные сеансы с идентификатором: "+model.sessions+" · события: "+model.events.length+" · связи: "+model.links.length));
   const tools=el("div","graph-tools"), minus=el("button","button","−"),plus=el("button","button","+"),fit=el("button","button","По ширине"),fitAll=el("button","button","Весь граф"),scaleLabel=el("span","muted","100%"),listToggle=el("button","text-button","Список событий");
   minus.setAttribute("aria-label","Уменьшить масштаб графа");plus.setAttribute("aria-label","Увеличить масштаб графа");
   for(const b of [minus,plus,fit,fitAll,listToggle])b.type="button";
@@ -109,7 +115,7 @@ function renderChainGraph(root,model) {
   function selectEvent(event) {
     highlight(event.event_id,"");const i=event.identity||{};
     inspector.replaceChildren(el("h3","","Событие и сеанс"),el("p","",date(event.at)),el("p","graph-node-name",i.computer||event.agent_id));
-    fact("Действие",event.action==="log_cleared"?"Очистка аудита":"Успешный вход");fact("Учётная запись",event.user||"Не указана");fact("Агент",event.agent_id);fact("Актив",event.asset_id);fact("SID",i.account_sid);fact("Домен источника",i.realm);fact("Logon GUID",i.session_guid);fact("Локальный сеанс",i.local_session);fact("SSH-ключ",i.ssh_key);fact("IP источника",event.source_ip);
+    fact("Действие",chainStepTitle(event));fact("Код события",event.code);for(const [k,v]of chainWindowsFacts(event))fact(k,v);fact("Учётная запись",event.user||"Не указана");fact("Агент",event.agent_id);fact("Актив",event.asset_id);fact("SID",i.account_sid);fact("Домен источника",i.realm);fact("Logon GUID",i.session_guid);fact("Локальный сеанс",i.local_session);fact("SSH-ключ",i.ssh_key);fact("IP источника",event.source_ip);
     if(!i.local_session&&!i.session_guid)inspector.append(el("p","muted","Идентификатор сеанса не передан; сеанс по имени пользователя не достраивается."));
     inspector.append(sourceButton(event),el("h4","","Сохранённые срабатывания"));
     const seen=new Set();for(const d of event.detections){const key=d.id+":"+d.revision;if(seen.has(key))continue;seen.add(key);inspector.append(el("p","graph-fact",d.rule+" · параметры v"+d.revision+" · "+d.id));}
@@ -121,7 +127,7 @@ function renderChainGraph(root,model) {
     inspector.append(el("p","muted","Это признак сопоставления из срабатывания, а не доказательство сетевого соединения между соседними узлами."));
   }
   function activate(n,handler){n.setAttribute("role","button");n.setAttribute("tabindex","0");n.addEventListener("click",handler);n.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();handler();}});}
-  function edgeName(kind){return {domain_sid:"Общий SID",logon_guid:"SID + Logon GUID",ssh_key:"Общий SSH-ключ",local_session:"Один локальный сеанс"}[kind]||"Сохранённая связь";}
+  function edgeName(kind){return chainEdgeTitle(kind);}
   for(const edge of model.links) {
     const a=positions.get(edge.from),b=positions.get(edge.to),same=a.x===b.x;
     const fromX=a.x+(same?cardWidth:cardWidth/2),fromY=a.y+116,toX=b.x+(same?cardWidth:cardWidth/2),toY=b.y;
@@ -134,7 +140,7 @@ function renderChainGraph(root,model) {
   model.events.forEach((event,index)=>{
     const p=positions.get(event.event_id),i=event.identity||{},session=i.local_session||i.session_guid||"не передан";
     const g=svgEl("g",{class:"graph-event","aria-label":`${index+1}. ${i.computer||event.agent_id}; ${event.user||"пользователь не указан"}; ${date(event.at)}; сеанс ${session}`});
-    g.append(svgEl("rect",{x:p.x,y:p.y,width:cardWidth,height:116,rx:9}),svgEl("text",{x:p.x+12,y:p.y+23,class:"graph-event-title"},(index+1)+". "+(event.action==="log_cleared"?"Очистка аудита":"Успешный вход")),svgEl("text",{x:p.x+12,y:p.y+45,class:"graph-small"},date(event.at)),svgEl("text",{x:p.x+12,y:p.y+68,class:"graph-account"},clip("Учётка: "+(event.user||"не указана"),31)),svgEl("text",{x:p.x+12,y:p.y+89,class:"graph-small"},clip("Сеанс узла: "+session,33)),svgEl("text",{x:p.x+12,y:p.y+106,class:"graph-hint"},"Выбрать событие →"));
+    g.append(svgEl("title",{},chainStepTitle(event)),svgEl("rect",{x:p.x,y:p.y,width:cardWidth,height:116,rx:9}),svgEl("text",{x:p.x+12,y:p.y+23,class:"graph-event-title"},clip((index+1)+". "+chainStepTitle(event),31)),svgEl("text",{x:p.x+12,y:p.y+45,class:"graph-small"},date(event.at)),svgEl("text",{x:p.x+12,y:p.y+68,class:"graph-account"},clip((event.action==="explicit_credentials"?"Инициатор: ":"Учётка: ")+(event.user||"не указана"),31)),svgEl("text",{x:p.x+12,y:p.y+89,class:"graph-small"},clip((i.local_session?"Сеанс узла: ":i.session_guid?"Logon GUID: ":"Сеанс: ")+session,33)),svgEl("text",{x:p.x+12,y:p.y+106,class:"graph-hint"},clip(event.windows_auth?.service?"Служба: "+event.windows_auth.service:event.action==="explicit_credentials"?"Реквизиты: "+event.windows_auth.target_account:"Выбрать событие →",34)));
     activate(g,()=>selectEvent(event));nodeLayer.append(g);nodeElements.set(event.event_id,g);
   });
   let scale=1;

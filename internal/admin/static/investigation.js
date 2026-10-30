@@ -23,12 +23,12 @@ function investigationLauncher(root,scope){
 }
 
 function renderEventChain(root,chain){
- if(!chain||chain.version!==1)return;
+ if(!chain||![1,2].includes(chain.version))return;
  const detail=el("details","event-chain"),summary=el("summary","","Межузловая цепочка · узлов: "+chain.hosts+" · событий: "+chain.steps.length);
  detail.append(summary,el("p","muted",chain.limitations));if(chain.truncated)detail.append(el("p","error","Выборка ограничена: часть истории или узлов не показана."));
- const list=el("ol","chain-timeline");for(const step of chain.steps){const row=el("li","chain-step"),identity=step.identity||{},link=chain.links.find(v=>v.to===step.event_id);
- if(link)row.append(el("p","chain-link",({domain_sid:"Связь по SID",logon_guid:"Связь по SID + Logon GUID",ssh_key:"Общий SSH-ключ",local_session:"Один локальный сеанс"}[link.kind]||link.kind)+" · "+link.basis));
- row.append(el("h4","",(identity.computer||"Узел "+short(step.agent_id))+" · "+(step.action==="log_cleared"?"Очистка аудита":"Успешный вход")),el("p","muted",date(step.at)+" · агент "+short(step.agent_id)+" · актив "+short(step.asset_id)),el("p","",step.user||"Пользователь не указан"));
- const facts=[identity.account_sid&&"SID: "+identity.account_sid,identity.realm&&"Домен источника: "+identity.realm,identity.session_guid&&"Logon GUID: "+identity.session_guid,identity.local_session&&"Локальный сеанс: "+identity.local_session,identity.ssh_key&&"SSH: "+identity.ssh_key,step.source_ip&&"IP источника: "+step.source_ip,step.matched_groups?.length&&"Группы при обработке: "+step.matched_groups.join(", ")].filter(Boolean);row.append(el("p","chain-identity",facts.join(" · ")));
+ const list=el("ol","chain-timeline");for(const step of chain.steps){const row=el("li","chain-step"),identity=step.identity||{},incoming=chain.links.filter(v=>v.to===step.event_id);
+ for(const link of incoming)row.append(el("p","chain-link",chainEdgeTitle(link.kind)+" · "+link.basis));
+ row.append(el("h4","",(identity.computer||"Узел "+short(step.agent_id))+" · "+chainStepTitle(step)),el("p","muted",date(step.at)+" · агент "+short(step.agent_id)+" · актив "+short(step.asset_id)),el("p","",step.user||"Пользователь не указан"));
+ const facts=[...chainWindowsFacts(step).map(([k,v])=>k+": "+v),identity.account_sid&&"SID: "+identity.account_sid,identity.realm&&"Домен источника: "+identity.realm,identity.session_guid&&"Logon GUID: "+identity.session_guid,identity.local_session&&"Локальный сеанс: "+identity.local_session,identity.ssh_key&&"SSH: "+identity.ssh_key,step.source_ip&&"IP источника: "+step.source_ip,step.matched_groups?.length&&"Группы при обработке: "+step.matched_groups.join(", ")].filter(Boolean);row.append(el("p","chain-identity",facts.join(" · ")));
  const raw=el("button","text-button","Исходное событие →");raw.type="button";raw.addEventListener("click",()=>showRaw(step.event_id));row.append(raw);list.append(row)}detail.append(list);root.append(detail)
 }

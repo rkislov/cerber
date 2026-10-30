@@ -27,6 +27,7 @@ func Catalog() []RuleDescription {
 		{ID: "windows.audit_log_cleared", Version: 1, Title: "Очищен журнал аудита Windows", Summary: "Получено событие Security 1102 от Microsoft-Windows-Eventlog (также поддерживается прежний формат Microsoft-Windows-Security-Auditing). Очистка могла быть административной операцией либо попыткой скрыть активность.", Condition: "Одно событие Security 1102; временной порог не требуется.", Scope: "Агент Windows и канал Security. Состояние пользователя и адрес источника уточняются по исходнику.", Limitations: "Правило видит только доставленное событие, а не полную историю журнала до очистки. Потеря/очистка недоставленных записей не восстанавливается автоматически.", FalsePositives: []string{"Плановое обслуживание журнала", "Подготовка тестового стенда"}, Investigation: []string{"Откройте исходную запись и определите инициатора операции", "Сопоставьте время с согласованными административными работами", "Проверьте соседние журналы, архивы и доступность событий до очистки"}, References: []string{"https://learn.microsoft.com/en-us/windows/security/threat-protection/auditing/event-1102"}},
 	}...)
 	out = append(out, ChainCatalog()...)
+	out = append(out, WindowsFlowCatalog()...)
 	for i := range out {
 		out[i].Attack = attack.RuleVersion(out[i].ID, out[i].Version)
 	}

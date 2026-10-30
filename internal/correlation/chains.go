@@ -9,6 +9,9 @@ import (
 )
 
 func ChainRule(rule string) bool {
+	if WindowsFlowRule(rule) {
+		return true
+	}
 	switch rule {
 	case "chain.domain_account_hosts", "chain.logon_guid_hosts", "chain.ssh_key_hosts", "chain.remote_logon_audit_clear":
 		return true
@@ -32,6 +35,9 @@ func ChainCandidates(n telemetry.Normalized) []string {
 		out := []string{"chain.domain_account_hosts"}
 		if n.Identity.SessionGUID != "" {
 			out = append(out, "chain.logon_guid_hosts")
+		}
+		if WindowsFlowTarget(n) {
+			out = append(out, "chain.kerberos_logon", "chain.explicit_credentials_logon")
 		}
 		return out
 	}
@@ -149,7 +155,7 @@ func Chain(rule string, n telemetry.Normalized, history []telemetry.Normalized, 
 	c := &telemetry.EventChain{Version: 1, Key: key, Hosts: hosts, Truncated: truncated, Steps: []telemetry.ChainStep{}, Links: []telemetry.ChainLink{}, Limitations: "Наблюдаемая последовательность, не доказательство атаки или прямого перемещения между соседними узлами. Идентификаторы сообщены источниками; возможны штатное администрирование и общий ключ. IP не подтверждает владельца. Локальный Logon ID действует только на одном агенте/активе и может повторяться после перезагрузки. Учитываются уже обработанные события оперативного журнала; поздние события не переигрывают прошлые срабатывания. Active response этими правилами не запускается автоматически."}
 	for j, p := range chosen {
 		d.Evidence = append(d.Evidence, p.ID)
-		c.Steps = append(c.Steps, telemetry.ChainStep{EventID: p.ID, AgentID: p.AgentID, AssetID: p.AssetID, At: p.EventTime, User: p.User, SourceIP: p.SourceIP, Action: p.Action, Identity: *p.Identity})
+		c.Steps = append(c.Steps, telemetry.ChainStep{Code: p.Code, Outcome: p.Outcome, WindowsAuth: p.WindowsAuth, EventID: p.ID, AgentID: p.AgentID, AssetID: p.AssetID, At: p.EventTime, User: p.User, SourceIP: p.SourceIP, Action: p.Action, Identity: *p.Identity})
 		if j > 0 {
 			kind, basis := "domain_sid", "Одинаковый SID доменной учётной записи из событий Windows; имена и адреса не являются ключом"
 			if rule == "chain.logon_guid_hosts" {

@@ -91,6 +91,7 @@ func ValidSource(s string) bool {
 }
 
 type Normalized struct {
+	WindowsAuth     *WindowsAuth       `json:"windows_auth,omitempty"`
 	Identity        *Identity          `json:"identity,omitempty"`
 	Attack          *attack.Assessment `json:"attack,omitempty"`
 	FilePath        string             `json:"file_path,omitempty"`
