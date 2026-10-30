@@ -9,6 +9,7 @@ import (
 	"github.com/rkislov/cerber/internal/flowexport"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"github.com/rkislov/cerber/internal/testutil/flowwire"
+	"github.com/rkislov/cerber/internal/testutil/sflowwire"
 	"net/netip"
 	"strings"
 	"testing"
@@ -126,5 +127,33 @@ func TestV9IPFIXFlowsReachGraphButExportTimeIsNotConnectionTime(t *testing.T) {
 		if n.Status != "parsed" || n.Network.Start != nil || n.EventTime != at || sensorMatches(a, n) {
 			t.Fatal("export clock fabricated a connection", n)
 		}
+	}
+}
+
+func TestSFlowSampleAddsObservationWithoutAccountIdentity(t *testing.T) {
+	s := storageFixture(t)
+	ctx := context.Background()
+	at := time.Now().UTC()
+	p, _ := json.Marshal(telemetry.SensorEnvelope{Input: "sflow", Peer: "192.0.2.254", PeerPort: 6343, Transport: "udp", Profile: "sflow5", Packet: sflowwire.Packet(false, 3, sflowwire.IPv4())})
+	raw := telemetry.Raw{ID: telemetry.ID("sflow"), Source: "network:netflow", Cursor: "1", ObservedAt: at, Data: p}
+	_, e := s.Accept(ctx, "sensor", "observer", telemetry.Batch{SchemaVersion: 1, ID: telemetry.ID("sflowbatch"), AgentID: "sensor", Records: []telemetry.Raw{raw}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = s.Step(ctx); e != nil {
+		t.Fatal(e)
+	}
+	a := telemetry.ChainStep{EventID: telemetry.ID("wfp"), AgentID: "host", At: at, Code: "5156", WindowsActivity: &telemetry.WindowsActivity{SourceAddress: "192.0.2.1", DestinationAddress: "192.0.2.2", SourcePort: "12345", DestinationPort: "445", Protocol: "6"}}
+	c := telemetry.EventChain{Steps: []telemetry.ChainStep{a}}
+	tx, e := s.db.BeginTx(ctx, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer tx.Rollback()
+	if e = sensorContext(ctx, tx, &c, func(telemetry.Normalized) (bool, error) { return true, nil }); e != nil {
+		t.Fatal(e)
+	}
+	if len(c.Steps) != 2 || len(c.Links) != 1 || !c.Steps[1].Network.Sampled || c.Steps[1].User != "" || !strings.Contains(c.Links[0].Basis, "выборочный") {
+		t.Fatal(c)
 	}
 }

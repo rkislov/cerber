@@ -45,6 +45,9 @@ func (f LineFile) Read(ctx context.Context, cursor string) ([]telemetry.Raw, err
 		return nil, e
 	}
 	defer file.Close()
+	return f.readOpen(ctx, cursor, file)
+}
+func (f LineFile) readOpen(ctx context.Context, cursor string, file *os.File) ([]telemetry.Raw, error) {
 	st, e := file.Stat()
 	if e != nil {
 		return nil, e

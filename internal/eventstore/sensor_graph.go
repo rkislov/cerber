@@ -133,7 +133,11 @@ func sensorContext(ctx context.Context, tx *sql.Tx, c *telemetry.EventChain, all
 				c.Truncated = true
 				return nil
 			}
-			c.Links = append(c.Links, telemetry.ChainLink{From: a.EventID, To: n.ID, Kind: "sensor_observation", Basis: "Независимое сетевое наблюдение: совпали TCP-адреса и порты, время WFP входит в наблюдаемый интервал с допуском 5 секунд. Сенсор — наблюдатель, не конечный узел. NAT, повторное использование портов, sampling и часы ограничивают вывод; принадлежность учётке и факт атаки не установлены."})
+			basis := ""
+			if n.Network.Sampled {
+				basis = "sFlow: выборочный пакет; использовано время приёма сенсором, задержка экспорта неизвестна. "
+			}
+			c.Links = append(c.Links, telemetry.ChainLink{From: a.EventID, To: n.ID, Kind: "sensor_observation", Basis: basis + "Независимое сетевое наблюдение: совпали TCP-адреса и порты, время WFP входит в наблюдаемый интервал с допуском 5 секунд. Сенсор — наблюдатель, не конечный узел. NAT, повторное использование портов, sampling и часы ограничивают вывод; принадлежность учётке и факт атаки не установлены."})
 		}
 	}
 	return nil

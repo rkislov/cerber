@@ -312,6 +312,16 @@ func (r *Receiver) record(i Input, peer string, port uint16, data []byte, result
 		if i.Format == "ipfix" && len(data) >= 16 {
 			domain = binary.BigEndian.Uint32(data[12:16])
 		}
+		if i.Format == "sflow5" && len(data) >= 16 {
+			switch binary.BigEndian.Uint32(data[4:8]) {
+			case 1:
+				domain = binary.BigEndian.Uint32(data[12:16])
+			case 2:
+				if len(data) >= 28 {
+					domain = binary.BigEndian.Uint32(data[24:28])
+				}
+			}
+		}
 		index := -1
 		for k, p := range m.status.Exporters {
 			if p.Peer == peer && p.Port == port && p.Domain == domain {
@@ -373,7 +383,7 @@ func (r *Receiver) snapshot(inputs []Input) sensorstate.Status {
 	if r.configured {
 		inputs = r.activeInputs
 	}
-	s := sensorstate.Status{MonitoringVersion: 1, InputManagement: 1, BaseInputs: definitions(r.localInputs), ConfigErrorInput: r.configErrorInput, StartedAt: r.started, ObservedAt: now, SampleSeconds: now.Sub(r.sampleAt).Seconds(), AppliedRevision: r.policy.Revision, ConfigError: r.configError, Inputs: []sensorstate.Input{}}
+	s := sensorstate.Status{SFlowVersion: 1, MonitoringVersion: 1, InputManagement: 1, BaseInputs: definitions(r.localInputs), ConfigErrorInput: r.configErrorInput, StartedAt: r.started, ObservedAt: now, SampleSeconds: now.Sub(r.sampleAt).Seconds(), AppliedRevision: r.policy.Revision, ConfigError: r.configError, Inputs: []sensorstate.Input{}}
 	if r.flowCtx != nil && !r.flowReady {
 		s.AppliedRevision = 0
 	}

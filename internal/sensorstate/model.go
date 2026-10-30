@@ -80,6 +80,7 @@ type Definition struct {
 	Listen   string `json:"listen,omitempty"`
 }
 type Status struct {
+	SFlowVersion      int           `json:"sflow_version,omitempty"`
 	MonitoringVersion int           `json:"monitoring_version,omitempty"`
 	Watches           []WatchStatus `json:"watches,omitempty"`
 	InputManagement   int           `json:"input_management,omitempty"`
@@ -94,7 +95,7 @@ type Status struct {
 }
 
 func Flow(format string) bool {
-	return format == "netflow5" || format == "netflow9" || format == "ipfix"
+	return format == "sflow5" || format == "netflow5" || format == "netflow9" || format == "ipfix"
 }
 func ValidAllow(allow []string) bool {
 	if len(allow) < 1 || len(allow) > 128 {
@@ -134,7 +135,7 @@ func ValidateControls(inputs []Control) error {
 			return ErrInvalid
 		}
 		if i.Format != "" || i.Listen != "" {
-			if !Flow(i.Format) || !ValidListen(i.Listen) || i.Format == "netflow5" && i.TemplateTTLSeconds != 0 {
+			if !Flow(i.Format) || !ValidListen(i.Listen) || (i.Format == "netflow5" || i.Format == "sflow5") && i.TemplateTTLSeconds != 0 {
 				return ErrInvalid
 			}
 		}
@@ -203,7 +204,7 @@ func Resolve(controls []Control, base []Definition) ([]Definition, error) {
 			continue
 		}
 		if c.Format == "" {
-			if !exists || original.Format == "netflow5" && c.TemplateTTLSeconds != 0 {
+			if !exists || (original.Format == "netflow5" || original.Format == "sflow5") && c.TemplateTTLSeconds != 0 {
 				return nil, ErrInvalid
 			}
 			continue
@@ -245,6 +246,11 @@ func Match(inputs []Control, status []Input) error {
 	return e
 }
 func MatchStatus(inputs []Control, status Status) error {
+	for _, c := range inputs {
+		if c.Format == "sflow5" && status.SFlowVersion != 1 {
+			return ErrInvalid
+		}
+	}
 	if status.InputManagement != 1 {
 		return Match(inputs, status.Inputs)
 	}
@@ -259,6 +265,9 @@ func ValidCode(s string) bool {
 	return false
 }
 func (s Status) Validate() error {
+	if s.SFlowVersion < 0 || s.SFlowVersion > 1 {
+		return ErrInvalid
+	}
 	if s.MonitoringVersion < 0 || s.MonitoringVersion > 1 || len(s.Watches) > 32 || s.MonitoringVersion == 0 && len(s.Watches) > 0 {
 		return ErrInvalid
 	}
@@ -289,7 +298,7 @@ func (s Status) Validate() error {
 		}
 		baseIDs[i.ID] = true
 		switch i.Format {
-		case "netflow5", "netflow9", "ipfix", "syslog", "cef-firewall", "cef-fess", "suricata":
+		case "netflow5", "netflow9", "ipfix", "sflow5", "syslog", "cef-firewall", "cef-fess", "suricata":
 		default:
 			return ErrInvalid
 		}
@@ -316,7 +325,7 @@ func (s Status) Validate() error {
 		}
 		seen[i.ID] = true
 		switch i.Format {
-		case "syslog", "cef-firewall", "cef-fess", "suricata", "netflow5", "netflow9", "ipfix":
+		case "syslog", "cef-firewall", "cef-fess", "suricata", "netflow5", "netflow9", "ipfix", "sflow5":
 		default:
 			return ErrInvalid
 		}

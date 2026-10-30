@@ -119,3 +119,19 @@ func TestMonitoringBoundsAndIndependentExporterKeys(t *testing.T) {
 		t.Fatal("unreachable queue threshold")
 	}
 }
+
+func TestSFlowCapabilityAndNoTemplateTTL(t *testing.T) {
+	c := sensorstate.Control{ID: "sflow", Format: "sflow5", Listen: "127.0.0.1:6343", Enabled: true, Allow: []string{"127.0.0.1/32"}}
+	s := sensorstate.Status{InputManagement: 1}
+	if sensorstate.MatchStatus([]sensorstate.Control{c}, s) == nil {
+		t.Fatal("old sensor accepted sFlow")
+	}
+	s.SFlowVersion = 1
+	if e := sensorstate.MatchStatus([]sensorstate.Control{c}, s); e != nil {
+		t.Fatal(e)
+	}
+	c.TemplateTTLSeconds = 900
+	if sensorstate.ValidateControls([]sensorstate.Control{c}) == nil {
+		t.Fatal("sFlow template TTL")
+	}
+}
