@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +48,9 @@ func (e NativeEngine) run(ctx context.Context, args ...string) ([]byte, error) {
 var versionRE = regexp.MustCompile(`(?i)suricata(?: version)?\s+(\d+)\.`)
 
 func (e NativeEngine) Major(ctx context.Context) (int, error) {
+	if runtime.GOOS == "windows" {
+		return 0, fmt.Errorf("Suricata rule reload requires a Unix control socket; use a Linux sensor")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	b, err := e.run(ctx, "-V")
