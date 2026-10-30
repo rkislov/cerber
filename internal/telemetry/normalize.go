@@ -89,6 +89,9 @@ func Normalize(r RawRecord) Normalized {
 		n.EventTime = at.UTC()
 		n.Code = strconv.Itoa(v.EventID)
 		n.Message = v.Provider + " · " + n.Code
+		if r.Raw.Source == "windows:System" && v.EventID == 7045 && v.Provider == "Service Control Manager" {
+			normalizeWindowsActivity(&n, v.Fields, v.Computer, v.EventID)
+		}
 		if r.Raw.Source == "windows:Security" && (v.Provider == "Microsoft-Windows-Security-Auditing" || v.EventID == 1102 && v.Provider == "Microsoft-Windows-Eventlog") {
 			switch v.EventID {
 			case 4624, 4625:
@@ -105,6 +108,8 @@ func Normalize(r RawRecord) Normalized {
 				n.SourceIP = v.Fields["IpAddress"]
 				n.Identity = windowsIdentity(v.Fields, v.Computer, "Target")
 				n.Parser = "windows-auth/3"
+			case 4688, 4697, 4698:
+				normalizeWindowsActivity(&n, v.Fields, v.Computer, v.EventID)
 			case 4648, 4769:
 				normalizeWindowsAuth(&n, v.Fields, v.Computer, v.EventID)
 			case 1102:

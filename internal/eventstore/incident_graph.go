@@ -61,5 +61,20 @@ func (s *Store) IncidentGraph(ctx context.Context, id string) (correlation.Inves
 		return out, e
 	}
 	rows.Close()
+	for i := range out.Anchors {
+		c := out.Anchors[i].Chain
+		if c == nil {
+			continue
+		}
+		truncated, err := activityContext(ctx, tx, c)
+		if err != nil {
+			return out, err
+		}
+		if err = serviceConfirmations(ctx, tx, c); err != nil {
+			return out, err
+		}
+		out.Truncated = out.Truncated || truncated || c.Truncated
+		c.Limitations += " Контекст процессов/служб/заданий добавлен на момент открытия графа из оперативного журнала; до 20 шагов, окно 30 минут. 7045 не содержит SID/сеанса инициатора и автоматически к пользователю не привязывается."
+	}
 	return out, tx.Commit()
 }
