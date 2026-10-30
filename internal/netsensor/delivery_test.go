@@ -49,8 +49,14 @@ func TestIndependentSensorFileDeliveryOverAuthenticatedAPI(t *testing.T) {
 		t.Fatal(e)
 	}
 	c := Config{SchemaVersion: 1, Server: server.URL, Credentials: secret, Spool: filepath.Join(dir, "queue.db"), Inputs: []Input{{ID: "tap", Format: "suricata", Protocol: "file", Path: file}}}
+	q, e := eventstore.Open(ctx, c.Spool)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer q.Close()
 	done := make(chan error, 1)
-	go func() { done <- Run(ctx, c, io.Discard) }()
+	go func() { done <- Run(ctx, c, io.Discard); close(done) }()
+	defer func() { cancel(); <-done }()
 	deadline := time.Now().Add(5 * time.Second)
 	received := false
 	for time.Now().Before(deadline) {
@@ -59,8 +65,16 @@ func TestIndependentSensorFileDeliveryOverAuthenticatedAPI(t *testing.T) {
 			t.Fatal(e)
 		}
 		if status.Raw == 1 {
-			received = true
-			break
+			// Server persistence precedes HTTP ACK and the sensor's durable dequeue.
+			// Wait for both before cancellation, which can interrupt either step.
+			count, _, err := q.EventQueueUsage(ctx, credentials.AgentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count == 0 {
+				received = true
+				break
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -82,11 +96,6 @@ func TestIndependentSensorFileDeliveryOverAuthenticatedAPI(t *testing.T) {
 	if n[0].AssetID != "observer-asset" || n[0].Network.Exporter != "local" || n[0].User != "" || n[0].Identity != nil {
 		t.Fatal("observer attribution corrupted", n[0])
 	}
-	q, e := eventstore.Open(ctx, c.Spool)
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer q.Close()
 	count, _, e := q.EventQueueUsage(ctx, credentials.AgentID)
 	if e != nil || count != 0 {
 		t.Fatal("ACK did not drain queue", count, e)
