@@ -43,6 +43,7 @@ jobs:
       - name: Regression checks for event inspector dialogs
         run: |
           node --check internal/admin/static/chain-graph.js
+          node --check internal/admin/static/settings.js
           node --check internal/admin/static/dialogs.js
           node --test internal/admin/uitest/*.test.cjs
       - name: Check event lifecycle JavaScript

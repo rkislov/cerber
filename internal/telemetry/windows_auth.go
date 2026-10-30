@@ -9,16 +9,19 @@ import (
 // WindowsAuth keeps the credential target / ticket principal separate from the
 // initiating Identity. In 4769 ServiceSID belongs to the service, not the user.
 type WindowsAuth struct {
-	TargetAccount string `json:"target_account,omitempty"`
-	AccountRef    string `json:"account_ref,omitempty"`
-	TargetGUID    string `json:"target_guid,omitempty"`
-	Service       string `json:"service,omitempty"`
-	ServiceSID    string `json:"service_sid,omitempty"`
-	Status        string `json:"status,omitempty"`
-	Encryption    string `json:"encryption,omitempty"`
-	TargetServer  string `json:"target_server,omitempty"`
-	Process       string `json:"process,omitempty"`
-	ProcessID     string `json:"process_id,omitempty"`
+	Directory     *DirectoryProof `json:"directory,omitempty"`
+	TargetName    string          `json:"target_name,omitempty"`
+	TargetRealm   string          `json:"target_realm,omitempty"`
+	TargetAccount string          `json:"target_account,omitempty"`
+	AccountRef    string          `json:"account_ref,omitempty"`
+	TargetGUID    string          `json:"target_guid,omitempty"`
+	Service       string          `json:"service,omitempty"`
+	ServiceSID    string          `json:"service_sid,omitempty"`
+	Status        string          `json:"status,omitempty"`
+	Encryption    string          `json:"encryption,omitempty"`
+	TargetServer  string          `json:"target_server,omitempty"`
+	Process       string          `json:"process,omitempty"`
+	ProcessID     string          `json:"process_id,omitempty"`
 }
 
 // WindowsAccountRef deliberately does not guess DNS/NetBIOS aliases or resolve
@@ -53,7 +56,7 @@ func normalizeWindowsAuth(n *Normalized, fields map[string]string, computer stri
 		display = realm + `\` + target
 	}
 	display = strings.ToLower(display)
-	n.WindowsAuth = &WindowsAuth{TargetAccount: display, AccountRef: ref}
+	n.WindowsAuth = &WindowsAuth{TargetAccount: display, AccountRef: ref, TargetName: target, TargetRealm: realm}
 	n.Parser = "windows-auth-flow/1"
 	switch code {
 	case 4648:

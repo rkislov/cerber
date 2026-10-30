@@ -12,6 +12,7 @@ import (
 )
 
 func (r *ruleRuntime) windowsFlowHistory(ctx context.Context, tx *sql.Tx, rule string, n telemetry.Normalized) ([]telemetry.Normalized, bool, error) {
+	n = r.store.attest(n)
 	cfg := r.policies[rule].Config
 	from := n.EventTime.Add(-time.Duration(cfg.WindowSeconds) * time.Second)
 	out := []telemetry.Normalized{}
@@ -65,6 +66,7 @@ func (r *ruleRuntime) windowsFlowHistory(ctx context.Context, tx *sql.Tx, rule s
 	filtered := []telemetry.Normalized{}
 	var attempt *telemetry.Normalized
 	for _, v := range out {
+		v = r.store.attest(v)
 		if v.EventTime.Before(from) || v.EventTime.After(n.EventTime) {
 			continue
 		}

@@ -2,12 +2,14 @@
 package integrations
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rkislov/cerber/internal/directory"
 	"io"
 	"net"
 	"net/mail"
@@ -38,30 +40,36 @@ type Change struct {
 	Fields  []string  `json:"fields"`
 }
 type configuration struct {
-	ThreatFoxEnabled bool     `json:"threatfox_enabled"`
-	Version          int64    `json:"version"`
-	SMTP             SMTP     `json:"smtp"`
-	ThreatFoxKey     string   `json:"threatfox_key,omitempty"`
-	History          []Change `json:"history"`
+	Directory        directory.Config `json:"directory"`
+	ThreatFoxEnabled bool             `json:"threatfox_enabled"`
+	Version          int64            `json:"version"`
+	SMTP             SMTP             `json:"smtp"`
+	ThreatFoxKey     string           `json:"threatfox_key,omitempty"`
+	History          []Change         `json:"history"`
 }
 type View struct {
-	ThreatFoxEnabled bool     `json:"threatfox_enabled"`
-	Configured       bool     `json:"configured"`
-	Version          int64    `json:"version"`
-	SMTP             SMTP     `json:"smtp"`
-	SMTPPasswordSet  bool     `json:"smtp_password_set"`
-	ThreatFoxKeySet  bool     `json:"threatfox_key_set"`
-	History          []Change `json:"history"`
+	Directory            directory.Config `json:"directory"`
+	DirectoryPasswordSet bool             `json:"directory_password_set"`
+	ThreatFoxEnabled     bool             `json:"threatfox_enabled"`
+	Configured           bool             `json:"configured"`
+	Version              int64            `json:"version"`
+	SMTP                 SMTP             `json:"smtp"`
+	SMTPPasswordSet      bool             `json:"smtp_password_set"`
+	ThreatFoxKeySet      bool             `json:"threatfox_key_set"`
+	History              []Change         `json:"history"`
 }
 type Command struct {
-	Scope             string  `json:"scope,omitempty"`
-	ThreatFoxEnabled  *bool   `json:"threatfox_enabled,omitempty"`
-	Version           int64   `json:"version"`
-	SMTP              SMTP    `json:"smtp"`
-	SMTPPassword      *string `json:"smtp_password,omitempty"`
-	ClearSMTPPassword bool    `json:"clear_smtp_password"`
-	ThreatFoxKey      *string `json:"threatfox_key,omitempty"`
-	ClearThreatFoxKey bool    `json:"clear_threatfox_key"`
+	Directory              directory.Config `json:"directory"`
+	DirectoryPassword      *string          `json:"directory_password,omitempty"`
+	ClearDirectoryPassword bool             `json:"clear_directory_password"`
+	Scope                  string           `json:"scope,omitempty"`
+	ThreatFoxEnabled       *bool            `json:"threatfox_enabled,omitempty"`
+	Version                int64            `json:"version"`
+	SMTP                   SMTP             `json:"smtp"`
+	SMTPPassword           *string          `json:"smtp_password,omitempty"`
+	ClearSMTPPassword      bool             `json:"clear_smtp_password"`
+	ThreatFoxKey           *string          `json:"threatfox_key,omitempty"`
+	ClearThreatFoxKey      bool             `json:"clear_threatfox_key"`
 }
 type sealed struct {
 	Schema     int    `json:"schema"`
@@ -131,11 +139,17 @@ func (s *Store) View() View {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v := View{ThreatFoxEnabled: s.config.ThreatFoxEnabled, Configured: true, Version: s.config.Version, SMTP: s.config.SMTP, SMTPPasswordSet: s.config.SMTP.Password != "", ThreatFoxKeySet: s.config.ThreatFoxKey != "", History: append([]Change{}, s.config.History...)}
+	v.Directory = s.config.Directory
+	v.DirectoryPasswordSet = v.Directory.Password != ""
+	v.Directory.Password = ""
 	v.SMTP.Password = ""
 	v.SMTP.To = append([]string{}, v.SMTP.To...)
 	return v
 }
 func validate(c configuration) error {
+	if c.Directory.Validate() != nil {
+		return ErrInvalid
+	}
 	m := c.SMTP
 	if len(m.Host) > 253 || strings.ContainsAny(m.Host, "\x00\r\n /\\:@") || len(m.Username) > 320 || len(m.Password) > 4096 || strings.ContainsAny(m.Username+m.Password, "\x00\r\n") || len(m.To) > 20 {
 		return ErrInvalid
@@ -197,12 +211,18 @@ func (s *Store) Save(c Command, actor string) error {
 	if c.Version != s.config.Version {
 		return ErrConflict
 	}
-	if actor == "" || len(actor) > 64 || c.SMTP.Password != "" || c.SMTPPassword != nil && c.ClearSMTPPassword || c.ThreatFoxKey != nil && c.ClearThreatFoxKey {
+	if actor == "" || len(actor) > 64 || c.Directory.Password != "" || c.DirectoryPassword != nil && c.ClearDirectoryPassword || c.SMTP.Password != "" || c.SMTPPassword != nil && c.ClearSMTPPassword || c.ThreatFoxKey != nil && c.ClearThreatFoxKey {
+		return ErrInvalid
+	}
+	if c.Scope != "directory" && (c.Directory != (directory.Config{}) || c.DirectoryPassword != nil || c.ClearDirectoryPassword) {
+		return ErrInvalid
+	}
+	if c.Scope == "directory" && (c.SMTPPassword != nil || c.ClearSMTPPassword || c.ThreatFoxEnabled != nil || c.ThreatFoxKey != nil || c.ClearThreatFoxKey) {
 		return ErrInvalid
 	}
 	next := s.config
 	next.Version++
-	if c.Scope != "" && c.Scope != "smtp" && c.Scope != "threatfox" {
+	if c.Scope != "" && c.Scope != "smtp" && c.Scope != "threatfox" && c.Scope != "directory" {
 		return ErrInvalid
 	}
 	if c.Scope == "smtp" && (c.ThreatFoxKey != nil || c.ClearThreatFoxKey || c.ThreatFoxEnabled != nil) {
@@ -211,7 +231,7 @@ func (s *Store) Save(c Command, actor string) error {
 	if c.Scope == "threatfox" && (c.SMTPPassword != nil || c.ClearSMTPPassword) {
 		return ErrInvalid
 	}
-	if c.Scope != "threatfox" {
+	if c.Scope != "threatfox" && c.Scope != "directory" {
 		next.SMTP = c.SMTP
 		next.SMTP.To = append([]string{}, c.SMTP.To...)
 		next.SMTP.Password = s.config.SMTP.Password
@@ -220,6 +240,16 @@ func (s *Store) Save(c Command, actor string) error {
 		}
 		if c.ClearSMTPPassword {
 			next.SMTP.Password = ""
+		}
+	}
+	if c.Scope == "directory" {
+		next.Directory = c.Directory
+		next.Directory.Password = s.config.Directory.Password
+		if c.DirectoryPassword != nil {
+			next.Directory.Password = *c.DirectoryPassword
+		}
+		if c.ClearDirectoryPassword {
+			next.Directory.Password = ""
 		}
 	}
 	if c.ThreatFoxEnabled != nil {
@@ -235,7 +265,10 @@ func (s *Store) Save(c Command, actor string) error {
 		return e
 	}
 	fields := []string{}
-	if c.Scope != "threatfox" {
+	if c.Scope == "directory" {
+		fields = append(fields, "directory")
+	}
+	if c.Scope != "threatfox" && c.Scope != "directory" {
 		fields = append(fields, "smtp")
 	}
 	if c.Scope == "threatfox" || c.ThreatFoxKey != nil || c.ClearThreatFoxKey {
@@ -281,3 +314,8 @@ func (s *Store) Save(c Command, actor string) error {
 	return nil
 }
 func (s *Store) snapshot() configuration { s.mu.Lock(); defer s.mu.Unlock(); return s.config }
+
+func (s *Store) DirectoryConfig() directory.Config { return s.snapshot().Directory }
+func (s *Store) ProbeDirectory(ctx context.Context) (directory.Domain, error) {
+	return directory.Probe(ctx, s.DirectoryConfig())
+}

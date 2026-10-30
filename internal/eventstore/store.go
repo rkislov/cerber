@@ -28,6 +28,7 @@ var incidentsSchema string
 var lifecycleSchema string
 
 type Store struct {
+	directory                              DirectorySource
 	policyMu                               sync.RWMutex
 	policyGroups                           RuleGroupSource
 	archiveUsageMu                         sync.Mutex
@@ -352,6 +353,9 @@ func (s *Store) Step(ctx context.Context) error {
 func (s *Store) step(ctx context.Context, stage string) error {
 	if stage == "correlator/1" {
 		if e := s.ensureChainIndexes(ctx); e != nil {
+			return e
+		}
+		if e := s.prepareDirectory(ctx); e != nil {
 			return e
 		}
 	}

@@ -13,15 +13,16 @@ import (
 // Identity contains source-reported identifiers, not directory attestation.
 // LocalSession is scoped to AgentID + AssetID and must never join hosts alone.
 type Identity struct {
-	AccountRef   string `json:"account_ref,omitempty"`
-	AccountKey   string `json:"account_key,omitempty"`
-	AccountSID   string `json:"account_sid,omitempty"`
-	Realm        string `json:"realm,omitempty"`
-	SessionGUID  string `json:"session_guid,omitempty"`
-	LocalSession string `json:"local_session,omitempty"`
-	SSHKey       string `json:"ssh_key,omitempty"`
-	Computer     string `json:"computer,omitempty"`
-	LogonType    int    `json:"logon_type,omitempty"`
+	Directory    *DirectoryProof `json:"directory,omitempty"`
+	AccountRef   string          `json:"account_ref,omitempty"`
+	AccountKey   string          `json:"account_key,omitempty"`
+	AccountSID   string          `json:"account_sid,omitempty"`
+	Realm        string          `json:"realm,omitempty"`
+	SessionGUID  string          `json:"session_guid,omitempty"`
+	LocalSession string          `json:"local_session,omitempty"`
+	SSHKey       string          `json:"ssh_key,omitempty"`
+	Computer     string          `json:"computer,omitempty"`
+	LogonType    int             `json:"logon_type,omitempty"`
 }
 
 var accountSID = regexp.MustCompile(`^S-1-5-21-([0-9]+)-([0-9]+)-([0-9]+)-([0-9]+)$`)

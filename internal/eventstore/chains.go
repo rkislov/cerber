@@ -141,6 +141,10 @@ func (r *ruleRuntime) evaluateChain(ctx context.Context, tx *sql.Tx, rule string
 		return nil, "", false, e
 	}
 	var d *telemetry.Detection
+	n = r.store.attest(n)
+	for i := range h {
+		h[i] = r.store.attest(h[i])
+	}
 	if correlation.WindowsFlowRule(rule) {
 		d = correlation.WindowsFlow(rule, n, h, v.Config.Threshold, truncated)
 	} else {
