@@ -3,15 +3,17 @@ package ingest
 
 import (
 	"fmt"
+	"github.com/rkislov/cerber/internal/sensorstate"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"time"
 )
 
-const MaxHeartbeatBytes int64 = 4096
+const MaxHeartbeatBytes int64 = 128 << 10
 
 // Heartbeat is ephemeral health, not inventory. Server receipt time determines
 // contact freshness; the agent clock never controls that decision.
 type Heartbeat struct {
+	Sensor           *sensorstate.Status        `json:"sensor,omitempty"`
 	Privilege        string                     `json:"privilege,omitempty"`
 	Events           *telemetry.CollectorHealth `json:"events,omitempty"`
 	SchemaVersion    int                        `json:"schema_version"`
@@ -28,6 +30,11 @@ type Heartbeat struct {
 }
 
 func (h Heartbeat) Validate() error {
+	if h.Sensor != nil {
+		if err := h.Sensor.Validate(); err != nil {
+			return err
+		}
+	}
 	switch h.Privilege {
 	case "", "unknown", "unprivileged", "root", "system", "administrator":
 	default:
@@ -78,13 +85,17 @@ func (h Heartbeat) TransitionKey() string {
 	if h.Events != nil {
 		key += ":" + h.Events.Key()
 	}
+	if h.Sensor != nil {
+		key += ":" + h.Sensor.Key()
+	}
 	return key
 }
 
 type HeartbeatReceipt struct {
-	AgentID    string    `json:"agent_id"`
-	ObservedAt time.Time `json:"observed_at"`
-	ReceivedAt time.Time `json:"received_at"`
+	SensorPolicy *sensorstate.Policy `json:"sensor_policy,omitempty"`
+	AgentID      string              `json:"agent_id"`
+	ObservedAt   time.Time           `json:"observed_at"`
+	ReceivedAt   time.Time           `json:"received_at"`
 }
 type AgentStatus struct {
 	AssetName         string     `json:"asset_name"`
@@ -122,6 +133,9 @@ func (s *AgentStatus) Evaluate(now time.Time, offlineAfter, inventoryMaxAge time
 		if now.Sub(*s.LatestInventoryAt) > inventoryMaxAge {
 			s.InventoryStatus = "stale"
 		}
+	}
+	if s.Health != nil && s.Health.Sensor != nil {
+		s.InventoryStatus = "not_applicable"
 	}
 	s.HealthStatus = "missing"
 	s.QueueStatus = "unknown"

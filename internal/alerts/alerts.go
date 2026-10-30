@@ -69,6 +69,9 @@ func Conditions(s ingest.AgentStatus, now time.Time, p Policy) map[string]Eviden
 	if now.Sub(seen) > p.OfflineAfter {
 		values["agent_offline"] = Evidence{ReferenceAt: seen, ThresholdSeconds: int64(p.OfflineAfter / time.Second), Missing: missing}
 	}
+	if s.Health != nil && s.Health.Sensor != nil {
+		return values
+	}
 	at := s.CreatedAt
 	missing = s.LatestInventoryAt == nil || s.LatestInventoryID == ""
 	if !missing {

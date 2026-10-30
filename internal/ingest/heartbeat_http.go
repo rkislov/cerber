@@ -90,7 +90,7 @@ func (c *Client) Heartbeat(ctx context.Context, h Heartbeat) (HeartbeatReceipt, 
 	if response.StatusCode != 200 {
 		return receipt, fmt.Errorf("heartbeat returned HTTP %d", response.StatusCode)
 	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 4096))
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 65537))
 	decoder.DisallowUnknownFields()
 	if err = decoder.Decode(&receipt); err != nil {
 		return receipt, fmt.Errorf("invalid heartbeat receipt")

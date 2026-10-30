@@ -119,7 +119,7 @@ func TestHeartbeatHTTPValidationAndAuthentication(t *testing.T) {
 	for _, tc := range []struct {
 		body, token string
 		want        int
-	}{{`{"unknown":true}`, c.Token, 400}, {string(valid) + ` {}`, c.Token, 400}, {string(mismatch), c.Token, 403}, {`{"pad":"` + strings.Repeat("x", 5000) + `"}`, c.Token, 413}, {string(valid), strings.Repeat("c", 64), 401}} {
+	}{{`{"unknown":true}`, c.Token, 400}, {string(valid) + ` {}`, c.Token, 400}, {string(mismatch), c.Token, 403}, {`{"pad":"` + strings.Repeat("x", int(ingest.MaxHeartbeatBytes)+1) + `"}`, c.Token, 413}, {string(valid), strings.Repeat("c", 64), 401}} {
 		req, _ := http.NewRequest("POST", server.URL+"/v1/agent/heartbeat", strings.NewReader(tc.body))
 		req.Header.Set("Authorization", "Bearer "+tc.token)
 		req.Header.Set("X-Cerber-Agent", c.AgentID)

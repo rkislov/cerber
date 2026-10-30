@@ -69,13 +69,13 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'")
 		path := r.URL.Path
-		if r.Method == "GET" && (path == "/admin" || path == "/admin/" || path == "/admin/rule-policies.js" || path == "/admin/chain-graph.js" || path == "/admin/investigation.js" || path == "/admin/windows.js" || path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" || path == "/admin/attack.js" || path == "/admin/dialogs.js" || path == "/admin/network.js" || path == "/admin/endpoint.js" || path == "/admin/settings.js" || path == "/admin/lifecycle.js" || path == "/admin/app.css" || path == "/admin/icon.svg") {
+		if r.Method == "GET" && (path == "/admin" || path == "/admin/" || path == "/admin/sensors.js" || path == "/admin/rule-policies.js" || path == "/admin/chain-graph.js" || path == "/admin/investigation.js" || path == "/admin/windows.js" || path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" || path == "/admin/attack.js" || path == "/admin/dialogs.js" || path == "/admin/network.js" || path == "/admin/endpoint.js" || path == "/admin/settings.js" || path == "/admin/lifecycle.js" || path == "/admin/app.css" || path == "/admin/icon.svg") {
 			name := "index.html"
 			if path == "/admin/icon.svg" {
 				name = "icon.svg"
 				w.Header().Set("Content-Type", "image/svg+xml")
 			}
-			if path == "/admin/rule-policies.js" || path == "/admin/chain-graph.js" || path == "/admin/investigation.js" || path == "/admin/windows.js" || path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" || path == "/admin/attack.js" || path == "/admin/dialogs.js" || path == "/admin/network.js" || path == "/admin/endpoint.js" || path == "/admin/settings.js" || path == "/admin/lifecycle.js" {
+			if path == "/admin/sensors.js" || path == "/admin/rule-policies.js" || path == "/admin/chain-graph.js" || path == "/admin/investigation.js" || path == "/admin/windows.js" || path == "/admin/app.js" || path == "/admin/groups.js" || path == "/admin/events.js" || path == "/admin/incidents.js" || path == "/admin/patches.js" || path == "/admin/attack.js" || path == "/admin/dialogs.js" || path == "/admin/network.js" || path == "/admin/endpoint.js" || path == "/admin/settings.js" || path == "/admin/lifecycle.js" {
 				name = strings.TrimPrefix(path, "/admin/")
 				w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			} else if path == "/admin/app.css" {
@@ -142,6 +142,9 @@ func NewHandler(store Store, key string, options Options) (http.Handler, error) 
 			return
 		}
 		r = r.WithContext(WithPrincipal(r.Context(), session.User))
+		if sensorManagement(store, w, r, session.User, options.Policy) {
+			return
+		}
 		if rulePolicyManagement(store, options.Events, options.Integrations, w, r, session.User, rulePreviewSlots) {
 			return
 		}

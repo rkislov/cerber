@@ -107,7 +107,7 @@ func (s *Store) init(ctx context.Context) error {
 	case 7:
 	case 8:
 	case 9:
-	case 10, 11, 12:
+	case 10, 11, 12, 13:
 	default:
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
@@ -186,6 +186,12 @@ func (s *Store) init(ctx context.Context) error {
 			return err
 		}
 	}
+	if version < 13 {
+		if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sensor_policies(agent_id TEXT PRIMARY KEY REFERENCES agents(id), revision INTEGER NOT NULL, payload TEXT NOT NULL CHECK(json_valid(payload))); PRAGMA user_version=13;`); err != nil {
+			return err
+		}
+	}
+
 	return tx.Commit()
 }
 func stamp(t time.Time) string          { return t.UTC().Format("2006-01-02T15:04:05.000000000Z") }
