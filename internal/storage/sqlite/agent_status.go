@@ -115,6 +115,23 @@ func (s *Store) AcceptHeartbeat(ctx context.Context, id, hash string, h ingest.H
 	}
 	now := time.Now().UTC()
 	receipt = ingest.HeartbeatReceipt{AgentID: id, ObservedAt: h.ObservedAt, ReceivedAt: now}
+	if h.Sensor != nil && h.Sensor.Rules != nil {
+		a, e := suricataAssignment(ctx, tx, id)
+		if e != nil {
+			return receipt, e
+		}
+		if a.Revision > 0 {
+			receipt.Suricata = &a
+		}
+		if old.Sensor == nil || old.Sensor.Rules == nil || *old.Sensor.Rules != *h.Sensor.Rules {
+			// Heartbeat timestamps change during steady state; only lifecycle transitions enter history.
+			if old.Sensor == nil || old.Sensor.Rules == nil || old.Sensor.Rules.State != h.Sensor.Rules.State || old.Sensor.Rules.Revision != h.Sensor.Rules.Revision || old.Sensor.Rules.AppliedID != h.Sensor.Rules.AppliedID || old.Sensor.Rules.Error != h.Sensor.Rules.Error {
+				if e = suricataHistory(ctx, tx, id, "suricata.status", h.Sensor.Rules); e != nil {
+					return receipt, e
+				}
+			}
+		}
+	}
 	// Duplicate/out-of-order sensor observations must not double-count cumulative counters.
 	duplicate := h.Sensor != nil && old.Sensor != nil && !h.Sensor.ObservedAt.After(old.Sensor.ObservedAt)
 	if duplicate {

@@ -4,6 +4,7 @@ package sensorstate
 
 import (
 	"errors"
+	rules "github.com/rkislov/cerber/internal/suricatarules"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"net/netip"
 	"strconv"
@@ -80,6 +81,7 @@ type Definition struct {
 	Listen   string `json:"listen,omitempty"`
 }
 type Status struct {
+	Rules             *rules.Status `json:"suricata,omitempty"`
 	SFlowVersion      int           `json:"sflow_version,omitempty"`
 	MonitoringVersion int           `json:"monitoring_version,omitempty"`
 	Watches           []WatchStatus `json:"watches,omitempty"`
@@ -265,6 +267,9 @@ func ValidCode(s string) bool {
 	return false
 }
 func (s Status) Validate() error {
+	if s.Rules != nil && s.Rules.Validate() != nil {
+		return ErrInvalid
+	}
 	if s.SFlowVersion < 0 || s.SFlowVersion > 1 {
 		return ErrInvalid
 	}
