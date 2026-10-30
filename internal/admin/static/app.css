@@ -76,3 +76,34 @@ dialog .detail-header .icon-button{flex:0 0 36px;align-self:flex-start}
 .sensor-form{padding:24px;max-width:850px;display:grid;gap:12px}.sensor-form textarea{width:100%;resize:vertical;min-height:110px;font:inherit;border:1px solid #d6e0ea;border-radius:6px;padding:12px}.sensor-form input[type=number]{display:block;max-width:240px;margin-top:8px}.sensor-form input[type=checkbox]{width:auto}.sensor-form .checkbox{display:flex;align-items:center;gap:10px}
 
 .sensor-listener-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.sensor-listener-fields input,.sensor-listener-fields select{display:block;width:100%;margin-top:6px}.sensor-policy-changes:not(:empty){padding:16px 24px;background:#f7fafb;border-bottom:1px solid var(--border)}.sensor-desired{padding:8px 0;border-bottom:1px solid var(--border)}.sensor-desired:last-child{border-bottom:0}.sensor-desired p{margin:4px 0}@media(max-width:700px){.sensor-listener-fields{grid-template-columns:1fr}}
+
+/* Compact navigation: a bounded drawer instead of a horizontally overflowing row. */
+.sidebar{overflow-y:auto;overscroll-behavior:contain}.sidebar>.brand,.sidebar>nav{flex-shrink:0}
+.mobile-header,.nav-backdrop{display:none}
+@media(max-width:760px){
+ .layout{min-width:0}
+ .mobile-header{position:sticky;top:0;z-index:120;height:64px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 18px;background:var(--nav);color:white;border-bottom:1px solid #293748}
+ .mobile-header .brand{font-size:18px}.mobile-header .brand-mark{width:29px;height:34px;font-size:22px}
+ .nav-toggle{border:1px solid #334a5c;border-radius:8px;background:#172a3c;color:#d5e7ed;display:flex;align-items:center;gap:10px;min-height:42px;padding:10px 12px;font-size:12px}
+ .nav-toggle:hover,.nav-toggle[aria-expanded=true]{background:#1d3b40;border-color:#42726f;color:#80e0ca}
+ .hamburger{position:relative;width:20px;height:16px;display:block}
+ .hamburger>span{position:absolute;left:0;width:20px;height:2px;border-radius:2px;background:currentColor;transition:transform .24s ease,opacity .16s ease;transform-origin:center}
+ .hamburger>span:nth-child(1){top:0}.hamburger>span:nth-child(2){top:7px}.hamburger>span:nth-child(3){top:14px}
+ .navigation-open .hamburger>span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+ .navigation-open .hamburger>span:nth-child(2){opacity:0;transform:scaleX(.3)}
+ .navigation-open .hamburger>span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+ body.navigation-open{overflow:hidden}
+ .sidebar{position:fixed;inset:64px auto 0 0;z-index:110;display:flex;width:min(320px,calc(100vw - 48px));max-width:100%;padding:16px 18px 24px;transform:translateX(-105%);visibility:hidden;transition:transform .26s cubic-bezier(.2,.8,.2,1),visibility 0s .26s;box-shadow:10px 0 40px #101d2c22}
+ .navigation-open .sidebar{transform:translateX(0);visibility:visible;transition-delay:0s}
+ .sidebar>.brand,.sidebar>.workspace{display:none}
+ .sidebar .nav-label{display:block;margin:4px 10px 12px;font-size:9px}
+ .sidebar nav{display:block;margin:0}.sidebar .nav-item{margin:3px 0;padding:12px;min-height:44px;font-size:13px;gap:12px;white-space:normal}
+ .sidebar .nav-item>span:first-child{display:inline;font-size:19px}.sidebar .nav-count{flex-shrink:0;font-size:10px}
+ .sidebar-bottom{display:block;margin-top:auto;padding-top:20px}.sidebar .security-note{display:none}.sidebar .profile{padding-top:16px}.sidebar .logout{min-height:44px}
+ .nav-backdrop{display:block;position:fixed;inset:64px 0 0;z-index:100;background:#0d1e3580;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .22s ease,visibility 0s .22s}
+ .navigation-open .nav-backdrop{opacity:1;visibility:visible;pointer-events:auto;transition-delay:0s}
+ .workspace-main{width:100%;margin-left:0;min-width:0}
+ .topbar{gap:12px}.topbar>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.topbar>div{min-width:0;flex-shrink:0;font-size:9px}.topbar .slash{padding:0 7px}
+}
+@media(max-width:480px){.topbar>div{display:none}.sensor-listener-fields input,.sensor-listener-fields select{min-width:0}.sensor-card-heading{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){.sidebar,.nav-backdrop,.hamburger>span{transition:none!important}}
