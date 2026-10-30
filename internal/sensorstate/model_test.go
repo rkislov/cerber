@@ -87,3 +87,35 @@ func TestManagedListenerScopeLimitsAndBindCollisions(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestMonitoringBoundsAndIndependentExporterKeys(t *testing.T) {
+	c := sensorstate.DefaultMonitor()
+	if e := c.Validate(); e != nil {
+		t.Fatal(e)
+	}
+	c.Watches = []sensorstate.Watch{{Input: "input", Peer: "192.0.2.1", SilenceSeconds: 180}, {Input: "input", Peer: "2001:db8::1", SilenceSeconds: 300}}
+	if e := c.Validate(); e != nil {
+		t.Fatal(e)
+	}
+	for _, peer := range []string{"router.local", "::ffff:192.0.2.1", "fe80::1%eth0", "0.0.0.0", "224.0.0.1"} {
+		bad := c
+		bad.Watches = []sensorstate.Watch{{Input: "input", Peer: peer, SilenceSeconds: 180}}
+		if bad.Validate() == nil {
+			t.Fatal("bad watch peer", peer)
+		}
+	}
+	c.Watches = append(c.Watches, c.Watches[0])
+	if c.Validate() == nil {
+		t.Fatal("duplicate expectation")
+	}
+	c = sensorstate.DefaultMonitor()
+	c.WindowSeconds = 179
+	if c.Validate() == nil {
+		t.Fatal("unbounded window")
+	}
+	c = sensorstate.DefaultMonitor()
+	c.QueueBytes = 257 << 20
+	if c.Validate() == nil {
+		t.Fatal("unreachable queue threshold")
+	}
+}

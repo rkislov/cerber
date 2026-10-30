@@ -65,9 +65,7 @@ func (s *Store) ChangeSensorPolicy(ctx context.Context, c sensorstate.Change) (s
 	if json.Unmarshal([]byte(payload), &h) != nil || h.Sensor == nil {
 		return p, sensorstate.ErrNotFound
 	}
-	if e = sensorstate.MatchStatus(c.Inputs, *h.Sensor); e != nil {
-		return p, e
-	}
+
 	old, e := sensorPolicy(ctx, tx, c.AgentID)
 	if e != nil {
 		return p, e
@@ -75,7 +73,30 @@ func (s *Store) ChangeSensorPolicy(ctx context.Context, c sensorstate.Change) (s
 	if old.Revision != c.ExpectedRevision || old.Revision >= 1<<53-1 {
 		return p, sensorstate.ErrConflict
 	}
-	p = sensorstate.Policy{Revision: old.Revision + 1, Inputs: c.Inputs, UpdatedAt: time.Now().UTC(), UpdatedBy: u.Username}
+	if c.Monitor != nil {
+		if h.Sensor.MonitoringVersion != 1 || c.Monitor.Validate() != nil {
+			return p, sensorstate.ErrInvalid
+		}
+		for _, w := range c.Monitor.Watches {
+			found := false
+			for _, i := range h.Sensor.Inputs {
+				if i.ID == w.Input && i.Protocol != "file" {
+					found = true
+				}
+			}
+			if !found {
+				return p, sensorstate.ErrInvalid
+			}
+		}
+		c.Inputs = old.Inputs
+	}
+	if e = sensorstate.MatchStatus(c.Inputs, *h.Sensor); e != nil {
+		return p, e
+	}
+	p = sensorstate.Policy{Revision: old.Revision + 1, Inputs: c.Inputs, Monitor: old.Monitor, UpdatedAt: time.Now().UTC(), UpdatedBy: u.Username}
+	if c.Monitor != nil {
+		p.Monitor = &sensorstate.MonitorPolicy{Revision: p.Revision, Config: *c.Monitor, UpdatedAt: p.UpdatedAt, UpdatedBy: u.Username}
+	}
 	data, e := json.Marshal(p)
 	if e != nil {
 		return p, e

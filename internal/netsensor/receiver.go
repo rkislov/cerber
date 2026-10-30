@@ -36,6 +36,7 @@ import (
 const maxMessage = 12000
 
 type Receiver struct {
+	watches                                                            map[string]sensorstate.WatchStatus
 	localInputs, activeInputs                                          []Input
 	configured                                                         bool
 	flowCtx                                                            context.Context

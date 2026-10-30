@@ -31,7 +31,15 @@ func (s *Store) EvaluateAlerts(ctx context.Context, now time.Time, policy alerts
 		result.Raised += page.result.Raised
 		result.Resolved += page.result.Resolved
 		if page.after == "" {
-			return result, nil
+			tx, e := s.db.BeginTx(ctx, nil)
+			if e != nil {
+				return result, e
+			}
+			defer tx.Rollback()
+			if e = pruneSensorHistory(ctx, tx, now); e != nil {
+				return result, e
+			}
+			return result, tx.Commit()
 		}
 		after = page.after
 	}
@@ -55,10 +63,23 @@ func (s *Store) evaluateAlertPage(ctx context.Context, now time.Time, policy ale
 	}
 	for _, agent := range agents {
 		conditions := alerts.Conditions(agent, now, policy)
-		if err = eventDeliveryConditions(ctx, tx, agent, now, conditions); err != nil {
+		if agent.Health == nil || agent.Health.Sensor == nil {
+			if err = eventDeliveryConditions(ctx, tx, agent, now, conditions); err != nil {
+				return page, err
+			}
+		}
+		if err = sensorConditions(ctx, tx, agent, now, conditions); err != nil {
 			return page, err
 		}
 		for _, kind := range alerts.Kinds {
+			if agent.Health != nil && agent.Health.Sensor != nil && !agent.Revoked && kind != "agent_offline" && kind != "event_health_stale" && kind != "inventory_stale" {
+				_, offline := conditions["agent_offline"]
+				_, stale := conditions["event_health_stale"]
+				_, active := conditions[kind]
+				if (offline || stale) && !active {
+					continue
+				} // Unknown is not evidence of recovery.
+			}
 			var id string
 			err = tx.QueryRowContext(ctx, "SELECT id FROM alerts WHERE agent_id=? AND kind=? AND resolved_at IS NULL", agent.AgentID, kind).Scan(&id)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -102,6 +123,11 @@ func (s *Store) evaluateAlertPage(ctx context.Context, now time.Time, policy ale
 					return page, err
 				}
 				page.result.Resolved++
+			} else if id != "" && active {
+				payload, _ := json.Marshal(evidence)
+				if _, err = tx.ExecContext(ctx, "UPDATE alerts SET evidence=? WHERE id=? AND evidence<>?", string(payload), id, string(payload)); err != nil {
+					return page, err
+				}
 			}
 		}
 		page.result.Scanned++

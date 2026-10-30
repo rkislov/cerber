@@ -17,6 +17,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+//go:embed sensor_monitor.sql
+var sensorMonitorSchema string
+
 //go:embed patch.sql
 var patchSchema string
 
@@ -107,7 +110,7 @@ func (s *Store) init(ctx context.Context) error {
 	case 7:
 	case 8:
 	case 9:
-	case 10, 11, 12, 13:
+	case 10, 11, 12, 13, 14:
 	default:
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
@@ -192,6 +195,12 @@ func (s *Store) init(ctx context.Context) error {
 		}
 	}
 
+	if version < 14 {
+		q := "ALTER TABLE alerts RENAME TO alerts_v13;" + strings.Split(alertsSchema, "CREATE UNIQUE INDEX")[0] + "INSERT INTO alerts SELECT * FROM alerts_v13;DROP TABLE alerts_v13;" + alertsSchema + sensorMonitorSchema + "PRAGMA user_version=14;"
+		if _, err = tx.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 func stamp(t time.Time) string          { return t.UTC().Format("2006-01-02T15:04:05.000000000Z") }

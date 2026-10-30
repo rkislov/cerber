@@ -38,10 +38,10 @@ type Alert struct {
 	Evidence       Evidence   `json:"evidence"`
 }
 
-var Kinds = []string{"agent_offline", "inventory_stale", "event_delivery_stalled", "event_queue_growing", "event_health_stale"}
+var Kinds = []string{"agent_offline", "inventory_stale", "event_delivery_stalled", "event_queue_growing", "event_health_stale", "sensor_no_traffic", "sensor_receive_errors", "sensor_template_errors", "sensor_policy_pending"}
 
 func Title(kind string) string {
-	if v, ok := map[string]string{"agent_offline": "Нет связи с агентом", "inventory_stale": "Устаревший инвентарь", "event_delivery_stalled": "Задержка доставки событий", "event_queue_growing": "Растёт очередь событий", "event_health_stale": "Устарело состояние сбора событий"}[kind]; ok {
+	if v, ok := map[string]string{"sensor_no_traffic": "Нет ожидаемого трафика экспортёра", "sensor_receive_errors": "Ошибки приёма сетевого сенсора", "sensor_template_errors": "Отсутствуют шаблоны NetFlow/IPFIX", "sensor_policy_pending": "Не применены настройки сенсора", "agent_offline": "Нет связи с агентом", "inventory_stale": "Устаревший инвентарь", "event_delivery_stalled": "Задержка доставки событий", "event_queue_growing": "Растёт очередь событий", "event_health_stale": "Устарело состояние сбора событий"}[kind]; ok {
 		return v
 	}
 	return kind
