@@ -35,13 +35,14 @@ func NewHandler(store Receiver) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		isRules := r.URL.Path == "/v1/agent/suricata"
 		isHeartbeat := r.URL.Path == "/v1/agent/heartbeat"
 		isJob := r.URL.Path == "/v1/agent/jobs/claim" || r.URL.Path == "/v1/agent/jobs/finish"
-		if r.URL.Path != "/v1/agent/reports" && !isHeartbeat && !isJob {
+		if r.URL.Path != "/v1/agent/reports" && !isHeartbeat && !isJob && !isRules {
 			http.NotFound(w, r)
 			return
 		}
-		if r.Method != http.MethodPost {
+		if (!isRules && r.Method != http.MethodPost) || (isRules && r.Method != http.MethodGet) {
 			w.Header().Set("Allow", "POST")
 			http.Error(w, "method not allowed", 405)
 			return
@@ -74,6 +75,10 @@ func NewHandler(store Receiver) http.Handler {
 		default:
 			w.Header().Set("Retry-After", "30")
 			http.Error(w, "receiver busy", 429)
+			return
+		}
+		if isRules {
+			receiveSuricata(w, r, store, id, hash)
 			return
 		}
 		content, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
