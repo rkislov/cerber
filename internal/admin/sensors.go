@@ -18,7 +18,7 @@ type sensorStore interface {
 }
 
 func sensorManagement(base Store, w http.ResponseWriter, r *http.Request, user User, policy alerts.Policy) bool {
-	if r.URL.Path != "/admin/api/sensors" {
+	if r.URL.Path != "/admin/api/sensors" && r.URL.Path != "/admin/api/sensors/history" {
 		return false
 	}
 	s, ok := base.(sensorStore)
@@ -40,6 +40,27 @@ func sensorManagement(base Store, w http.ResponseWriter, r *http.Request, user U
 		}
 		http.Error(w, http.StatusText(code), code)
 	}
+	if r.URL.Path == "/admin/api/sensors/history" {
+		if r.Method != "GET" {
+			http.Error(w, "method not allowed", 405)
+			return true
+		}
+		h, ok := base.(interface {
+			SensorHistory(context.Context, string, string, string, time.Time) (sensorstate.History, error)
+		})
+		if !ok {
+			http.Error(w, "history unavailable", 503)
+			return true
+		}
+		q := r.URL.Query()
+		v, e := h.SensorHistory(r.Context(), q.Get("agent"), q.Get("input"), q.Get("period"), time.Now().UTC())
+		if e != nil {
+			fail(e)
+		} else {
+			writeJSON(w, v)
+		}
+		return true
+	}
 	if r.Method == "GET" {
 		after := r.URL.Query().Get("after")
 		if after != "" && !ingest.Identifier(after) {
@@ -57,8 +78,9 @@ func sensorManagement(base Store, w http.ResponseWriter, r *http.Request, user U
 			next = rows[49].AgentID
 		}
 		type item struct {
-			Agent  ingest.AgentStatus `json:"agent"`
-			Policy sensorstate.Policy `json:"policy"`
+			Agent   ingest.AgentStatus        `json:"agent"`
+			Policy  sensorstate.Policy        `json:"policy"`
+			Monitor sensorstate.MonitorConfig `json:"monitor"`
 		}
 		items := []item{}
 		now := time.Now().UTC()
@@ -69,7 +91,7 @@ func sensorManagement(base Store, w http.ResponseWriter, r *http.Request, user U
 				fail(e)
 				return true
 			}
-			items = append(items, item{a, p})
+			items = append(items, item{a, p, p.MonitorConfig()})
 		}
 		writeJSON(w, map[string]any{"items": items, "next_cursor": next, "as_of": now})
 		return true

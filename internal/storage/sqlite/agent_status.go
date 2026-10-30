@@ -105,9 +105,9 @@ func (s *Store) AcceptHeartbeat(ctx context.Context, id, hash string, h ingest.H
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return receipt, err
 	}
+	var old ingest.Heartbeat
 	changed := previous == ""
 	if !changed {
-		var old ingest.Heartbeat
 		if err = json.Unmarshal([]byte(previous), &old); err != nil {
 			return receipt, err
 		}
@@ -115,6 +115,21 @@ func (s *Store) AcceptHeartbeat(ctx context.Context, id, hash string, h ingest.H
 	}
 	now := time.Now().UTC()
 	receipt = ingest.HeartbeatReceipt{AgentID: id, ObservedAt: h.ObservedAt, ReceivedAt: now}
+	// Duplicate/out-of-order sensor observations must not double-count cumulative counters.
+	duplicate := h.Sensor != nil && old.Sensor != nil && !h.Sensor.ObservedAt.After(old.Sensor.ObservedAt)
+	if duplicate {
+		policy, e := sensorPolicy(ctx, tx, id)
+		if e != nil {
+			return receipt, e
+		}
+		if policy.Revision > 0 {
+			receipt.SensorPolicy = &policy
+		}
+		return receipt, tx.Commit()
+	}
+	if err = recordSensorHistory(ctx, tx, id, h, old, now); err != nil {
+		return receipt, err
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO agent_heartbeats(agent_id,received_at,payload) VALUES(?,?,?) ON CONFLICT(agent_id) DO UPDATE SET received_at=excluded.received_at,payload=excluded.payload`, id, stamp(now), string(data)); err != nil {
 		return receipt, err
 	}

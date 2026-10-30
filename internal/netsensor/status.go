@@ -89,6 +89,11 @@ func (r *Receiver) applyPolicy(p sensorstate.Policy, persist bool) error {
 	if p.Revision < r.policy.Revision || p.Revision == r.policy.Revision && (r.flowCtx == nil || r.flowReady) {
 		return nil
 	}
+	if p.Monitor != nil {
+		m := *p.Monitor
+		m.Config.Watches = append([]sensorstate.Watch(nil), p.Monitor.Config.Watches...)
+		p.Monitor = &m
+	}
 	p.Inputs = append([]sensorstate.Control(nil), p.Inputs...)
 	for k := range p.Inputs {
 		p.Inputs[k].Allow = append([]string(nil), p.Inputs[k].Allow...)
@@ -101,6 +106,9 @@ func (r *Receiver) applyPolicy(p sensorstate.Policy, persist bool) error {
 			v := m.status
 			base = append(base, Input{ID: v.ID, Format: v.Format, Protocol: v.Protocol, Listen: v.Listen, Allow: v.Allow, TemplateTTLSeconds: v.TemplateTTLSeconds})
 		}
+	}
+	if p.Monitor != nil && (p.Monitor.Config.Validate() != nil || p.Monitor.Revision < 1 || p.Monitor.Revision > p.Revision || p.Monitor.UpdatedAt.IsZero()) {
+		return sensorstate.ErrInvalid
 	}
 	next, e := resolveInputs(base, p)
 	if e != nil || p.UpdatedAt.IsZero() {
@@ -165,6 +173,7 @@ func (r *Receiver) applyPolicy(p sensorstate.Policy, persist bool) error {
 	}
 	r.activeInputs = next
 	r.policy = p
+	r.syncWatches(time.Now().UTC())
 	r.configError = ""
 	r.configErrorInput = ""
 	r.mu.Lock()
@@ -286,6 +295,15 @@ func (r *Receiver) record(i Input, peer string, port uint16, data []byte, result
 	}
 	// Only admitted flow peers enter the bounded exporter list. UDP source claims
 	// are observations, not authenticated device identities.
+	if trackPeer {
+		for key, w := range r.watches {
+			if w.Input == i.ID && (w.Peer == "" || w.Peer == peer) {
+				at := now
+				w.LastSeen = &at
+				r.watches[key] = w
+			}
+		}
+	}
 	if trackPeer && sensorstate.Flow(i.Format) {
 		domain := uint32(0)
 		if i.Format == "netflow9" && len(data) >= 20 {
@@ -355,7 +373,7 @@ func (r *Receiver) snapshot(inputs []Input) sensorstate.Status {
 	if r.configured {
 		inputs = r.activeInputs
 	}
-	s := sensorstate.Status{InputManagement: 1, BaseInputs: definitions(r.localInputs), ConfigErrorInput: r.configErrorInput, StartedAt: r.started, ObservedAt: now, SampleSeconds: now.Sub(r.sampleAt).Seconds(), AppliedRevision: r.policy.Revision, ConfigError: r.configError, Inputs: []sensorstate.Input{}}
+	s := sensorstate.Status{MonitoringVersion: 1, InputManagement: 1, BaseInputs: definitions(r.localInputs), ConfigErrorInput: r.configErrorInput, StartedAt: r.started, ObservedAt: now, SampleSeconds: now.Sub(r.sampleAt).Seconds(), AppliedRevision: r.policy.Revision, ConfigError: r.configError, Inputs: []sensorstate.Input{}}
 	if r.flowCtx != nil && !r.flowReady {
 		s.AppliedRevision = 0
 	}
@@ -394,6 +412,38 @@ func (r *Receiver) snapshot(inputs []Input) sensorstate.Status {
 		sort.Slice(i.Exporters, func(a, b int) bool { return i.Exporters[a].LastSeen.After(i.Exporters[b].LastSeen) })
 		s.Inputs = append(s.Inputs, i)
 	}
+	for _, w := range r.watches {
+		if w.LastSeen != nil {
+			at := *w.LastSeen
+			w.LastSeen = &at
+		}
+		s.Watches = append(s.Watches, w)
+	}
+	sort.Slice(s.Watches, func(i, j int) bool {
+		return sensorstate.WatchKey(s.Watches[i].Input, s.Watches[i].Peer) < sensorstate.WatchKey(s.Watches[j].Input, s.Watches[j].Peer)
+	})
 	r.sampleAt = now
 	return s
+}
+
+// Keep configured exporter liveness independently of the bounded recent-session list.
+// Called with controlMu and metricsMu held, before new readers start.
+func (r *Receiver) syncWatches(now time.Time) {
+	next := map[string]sensorstate.WatchStatus{}
+	if r.policy.Monitor != nil && r.policy.Monitor.Config.Enabled {
+		for _, w := range r.policy.Monitor.Config.Watches {
+			for _, i := range r.activeInputs {
+				if i.ID != w.Input || i.Protocol == "file" || !r.enabled(i.ID) {
+					continue
+				}
+				key := sensorstate.WatchKey(w.Input, w.Peer)
+				v, ok := r.watches[key]
+				if !ok {
+					v = sensorstate.WatchStatus{Input: w.Input, Peer: w.Peer, Since: now}
+				}
+				next[key] = v
+			}
+		}
+	}
+	r.watches = next
 }

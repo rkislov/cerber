@@ -25,15 +25,17 @@ type Control struct {
 	TemplateTTLSeconds int      `json:"template_ttl_seconds"`
 }
 type Policy struct {
-	Revision  int64     `json:"revision"`
-	Inputs    []Control `json:"inputs"`
-	UpdatedAt time.Time `json:"updated_at"`
-	UpdatedBy string    `json:"updated_by"`
+	Monitor   *MonitorPolicy `json:"monitor,omitempty"`
+	Revision  int64          `json:"revision"`
+	Inputs    []Control      `json:"inputs"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	UpdatedBy string         `json:"updated_by"`
 }
 type Change struct {
-	AgentID          string    `json:"agent_id"`
-	ExpectedRevision int64     `json:"expected_revision"`
-	Inputs           []Control `json:"inputs"`
+	Monitor          *MonitorConfig `json:"monitor,omitempty"`
+	AgentID          string         `json:"agent_id"`
+	ExpectedRevision int64          `json:"expected_revision"`
+	Inputs           []Control      `json:"inputs"`
 }
 type Counters struct {
 	Messages    uint64 `json:"messages"`
@@ -78,15 +80,17 @@ type Definition struct {
 	Listen   string `json:"listen,omitempty"`
 }
 type Status struct {
-	InputManagement  int          `json:"input_management,omitempty"`
-	BaseInputs       []Definition `json:"base_inputs,omitempty"`
-	ConfigErrorInput string       `json:"config_error_input,omitempty"`
-	StartedAt        time.Time    `json:"started_at"`
-	ObservedAt       time.Time    `json:"observed_at"`
-	SampleSeconds    float64      `json:"sample_seconds"`
-	AppliedRevision  int64        `json:"applied_revision"`
-	ConfigError      string       `json:"config_error,omitempty"`
-	Inputs           []Input      `json:"inputs"`
+	MonitoringVersion int           `json:"monitoring_version,omitempty"`
+	Watches           []WatchStatus `json:"watches,omitempty"`
+	InputManagement   int           `json:"input_management,omitempty"`
+	BaseInputs        []Definition  `json:"base_inputs,omitempty"`
+	ConfigErrorInput  string        `json:"config_error_input,omitempty"`
+	StartedAt         time.Time     `json:"started_at"`
+	ObservedAt        time.Time     `json:"observed_at"`
+	SampleSeconds     float64       `json:"sample_seconds"`
+	AppliedRevision   int64         `json:"applied_revision"`
+	ConfigError       string        `json:"config_error,omitempty"`
+	Inputs            []Input       `json:"inputs"`
 }
 
 func Flow(format string) bool {
@@ -255,6 +259,20 @@ func ValidCode(s string) bool {
 	return false
 }
 func (s Status) Validate() error {
+	if s.MonitoringVersion < 0 || s.MonitoringVersion > 1 || len(s.Watches) > 32 || s.MonitoringVersion == 0 && len(s.Watches) > 0 {
+		return ErrInvalid
+	}
+	watchKeys := map[string]bool{}
+	for _, w := range s.Watches {
+		c := DefaultMonitor()
+		c.Watches = []Watch{{Input: w.Input, Peer: w.Peer, SilenceSeconds: 180}}
+		key := WatchKey(w.Input, w.Peer)
+		if c.Validate() != nil || watchKeys[key] || w.Since.IsZero() || w.Since.Before(s.StartedAt) || w.Since.After(s.ObservedAt) || w.LastSeen != nil && (w.LastSeen.Before(w.Since) || w.LastSeen.After(s.ObservedAt)) {
+			return ErrInvalid
+		}
+		watchKeys[key] = true
+	}
+
 	if s.StartedAt.IsZero() || s.ObservedAt.IsZero() || s.StartedAt.After(s.ObservedAt) || s.SampleSeconds < 0 || s.SampleSeconds > 86400*365 || s.AppliedRevision < 0 || len(s.Inputs) > 8 {
 		return ErrInvalid
 	}

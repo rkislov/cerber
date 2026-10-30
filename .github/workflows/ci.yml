@@ -43,6 +43,7 @@ jobs:
       - name: Regression checks for event inspector dialogs
         run: |
           node --check internal/admin/static/navigation.js
+          node --check internal/admin/static/sensor-monitor.js
           node --check internal/admin/static/sensors.js
           node --check internal/admin/static/chain-graph.js
           node --check internal/admin/static/settings.js

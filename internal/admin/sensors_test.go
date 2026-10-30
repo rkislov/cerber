@@ -143,6 +143,7 @@ func TestSensorAdminPolicyRBACHeartbeatAndRevisions(t *testing.T) {
 	if e != nil || receipt.SensorPolicy == nil || receipt.SensorPolicy.Revision != 1 || len(receipt.SensorPolicy.Inputs) != 2 {
 		t.Fatal(receipt, e)
 	}
+	h.Sensor.ObservedAt = time.Now().UTC()
 	h.Sensor.AppliedRevision = 1
 	h.Sensor.Inputs[0].Enabled = false
 	if _, e = client.Heartbeat(ctx, h); e != nil {
@@ -165,6 +166,7 @@ func TestSensorAdminPolicyRBACHeartbeatAndRevisions(t *testing.T) {
 	if code, _, _ := request(root, "POST", "api/sensors", server.URL, command); code != 400 {
 		t.Fatal("legacy sensor accepted dynamic listener", code)
 	}
+	h.Sensor.ObservedAt = time.Now().UTC()
 	h.Sensor.InputManagement = 1
 	h.Sensor.BaseInputs = sensorstate.Definitions(h.Sensor.Inputs)
 	if _, e = client.Heartbeat(ctx, h); e != nil {
@@ -187,10 +189,51 @@ func TestSensorAdminPolicyRBACHeartbeatAndRevisions(t *testing.T) {
 	if code, b, _ := request(root, "POST", "api/sensors", server.URL, command); code != 200 {
 		t.Fatal("delete listener", code, string(b))
 	}
+
+	h.Sensor.MonitoringVersion = 1
+	h.Sensor.ObservedAt = time.Now().UTC()
+	if _, e = client.Heartbeat(ctx, h); e != nil {
+		t.Fatal(e)
+	}
+	monitoring := sensorstate.DefaultMonitor()
+	monitoring.Watches = []sensorstate.Watch{{Input: "v9", Peer: "127.0.0.1", SilenceSeconds: 600}}
+	command.ExpectedRevision = 4
+	command.Monitor = &monitoring
+	if code, b, _ := request(root, "POST", "api/sensors", server.URL, command); code != 200 {
+		t.Fatal("monitor save", code, string(b))
+	}
+	saved, e := s.SensorPolicy(ctx, "sensor")
+	if e != nil || saved.Monitor == nil || saved.Monitor.Revision != 5 || len(saved.Inputs) != 1 || !saved.Inputs[0].Removed {
+		t.Fatal("monitor overwrote listeners", saved, e)
+	}
+	for _, name := range []string{"operator", "reader", "analyst"} {
+		u := login(name)
+		if code, _, _ := request(u, "POST", "api/sensors", server.URL, sensorstate.Change{AgentID: "sensor", ExpectedRevision: 5, Monitor: &monitoring}); code != 403 {
+			t.Fatal("monitor RBAC", name, code)
+		}
+		if code, _, _ := request(u, "GET", "api/sensors/history?agent=sensor&period=24h", "", nil); code != 200 {
+			t.Fatal("history viewer", code)
+		}
+	}
+	if code, _, _ := request(session{}, "GET", "api/sensors/history?agent=sensor", "", nil); code != 401 {
+		t.Fatal("history authentication", code)
+	}
+	if code, _, _ := request(root, "GET", "api/sensors/history?agent=sensor&period=forever", "", nil); code != 400 {
+		t.Fatal("history bounds", code)
+	}
+	command.ExpectedRevision = 5
+	command.Monitor = nil
+	if code, b, _ := request(root, "POST", "api/sensors", server.URL, command); code != 200 {
+		t.Fatal(code, string(b))
+	}
+	saved, e = s.SensorPolicy(ctx, "sensor")
+	if e != nil || saved.Monitor == nil || saved.Monitor.Revision != 5 || len(saved.Monitor.Config.Watches) != 1 {
+		t.Fatal("listener edit erased monitor", saved, e)
+	}
 	if e = s.AdminCommand(ctx, admin.Command{Action: "agent.revoke", AgentID: "sensor"}); e != nil {
 		t.Fatal(e)
 	}
-	command.ExpectedRevision = 4
+	command.ExpectedRevision = 6
 	if code, _, _ := request(root, "POST", "api/sensors", server.URL, command); code != 409 {
 		t.Fatal("revoked sensor write", code)
 	}

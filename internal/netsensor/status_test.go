@@ -154,3 +154,60 @@ func TestSensorExporterMetricsBoundedAndSnapshotDetached(t *testing.T) {
 		t.Fatal("unknown input allowed")
 	}
 }
+
+func TestExpectedExporterSurvivesRecentPeerEvictionAndPolicyRestart(t *testing.T) {
+	ctx := context.Background()
+	spool, e := eventstore.Open(ctx, ":memory:")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer spool.Close()
+	input := Input{ID: "ipfix", Format: "ipfix", Protocol: "udp", Listen: "127.0.0.1:14739", Allow: []string{"127.0.0.0/8"}}
+	c := Config{Spool: filepath.Join(t.TempDir(), "queue.db"), Inputs: []Input{input}}
+	r := newReceiver(spool, "sensor")
+	if e = r.configure(c); e != nil {
+		t.Fatal(e)
+	}
+	config := sensorstate.DefaultMonitor()
+	config.Watches = []sensorstate.Watch{{Input: "ipfix", Peer: "127.0.0.1", SilenceSeconds: 180}}
+	p := sensorstate.Policy{Revision: 1, UpdatedAt: time.Now().UTC(), Monitor: &sensorstate.MonitorPolicy{Revision: 1, UpdatedAt: time.Now().UTC(), Config: config}}
+	if e = r.applyPolicy(p, true); e != nil {
+		t.Fatal(e)
+	}
+	for n := 1; n <= 12; n++ {
+		r.receive(ctx, input, netip.MustParseAddrPort(fmt.Sprintf("127.0.0.%d:9999", n)), []byte{0, 10})
+	}
+	snapshot := r.snapshot(c.Inputs)
+	if e = snapshot.Validate(); e != nil {
+		t.Fatal(e)
+	}
+	if len(snapshot.Inputs[0].Exporters) != 8 || len(snapshot.Watches) != 1 || snapshot.Watches[0].LastSeen == nil {
+		t.Fatal(snapshot)
+	}
+	for _, peer := range snapshot.Inputs[0].Exporters {
+		if peer.Peer == "127.0.0.1" {
+			t.Fatal("expected peer not evicted in fixture")
+		}
+	}
+	last := *snapshot.Watches[0].LastSeen
+	snapshot.Watches[0].LastSeen = &snapshot.StartedAt
+	if !r.snapshot(c.Inputs).Watches[0].LastSeen.Equal(last) {
+		t.Fatal("snapshot alias")
+	}
+	restored := newReceiver(spool, "sensor")
+	if e = restored.configure(c); e != nil {
+		t.Fatal(e)
+	}
+	v := restored.snapshot(c.Inputs)
+	if len(v.Watches) != 1 || v.Watches[0].LastSeen != nil || v.Watches[0].Since.Before(v.StartedAt) {
+		t.Fatal("restart grace lost", v)
+	}
+	p.Revision = 2
+	p.Inputs = []sensorstate.Control{{ID: "ipfix", Enabled: false, Allow: []string{"127.0.0.0/8"}}}
+	if e = r.applyPolicy(p, true); e != nil {
+		t.Fatal(e)
+	}
+	if len(r.snapshot(c.Inputs).Watches) != 0 {
+		t.Fatal("paused input monitored")
+	}
+}
