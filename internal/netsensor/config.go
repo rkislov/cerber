@@ -13,16 +13,17 @@ import (
 )
 
 type Input struct {
-	ID               string   `json:"id"`
-	Format           string   `json:"format"`
-	Protocol         string   `json:"protocol"`
-	Listen           string   `json:"listen,omitempty"`
-	Path             string   `json:"path,omitempty"`
-	Allow            []string `json:"allow,omitempty"`
-	AllowPlainRemote bool     `json:"allow_plain_remote,omitempty"`
-	Cert             string   `json:"cert,omitempty"`
-	Key              string   `json:"key,omitempty"`
-	ClientCA         string   `json:"client_ca,omitempty"`
+	TemplateTTLSeconds int      `json:"template_ttl_seconds,omitempty"`
+	ID                 string   `json:"id"`
+	Format             string   `json:"format"`
+	Protocol           string   `json:"protocol"`
+	Listen             string   `json:"listen,omitempty"`
+	Path               string   `json:"path,omitempty"`
+	Allow              []string `json:"allow,omitempty"`
+	AllowPlainRemote   bool     `json:"allow_plain_remote,omitempty"`
+	Cert               string   `json:"cert,omitempty"`
+	Key                string   `json:"key,omitempty"`
+	ClientCA           string   `json:"client_ca,omitempty"`
 }
 type Config struct {
 	SchemaVersion int     `json:"schema_version"`
@@ -53,7 +54,7 @@ func Load(path string) (Config, error) {
 }
 func (i Input) Source() string {
 	switch i.Format {
-	case "netflow5":
+	case "netflow5", "netflow9", "ipfix":
 		return "network:netflow"
 	case "suricata":
 		return "network:suricata"
@@ -74,9 +75,12 @@ func (c Config) Validate() error {
 		}
 		seen[i.ID] = true
 		switch i.Format {
-		case "syslog", "cef-firewall", "cef-fess", "netflow5", "suricata":
+		case "syslog", "cef-firewall", "cef-fess", "netflow5", "netflow9", "ipfix", "suricata":
 		default:
 			return fmt.Errorf("unsupported input format")
+		}
+		if i.TemplateTTLSeconds != 0 && (i.TemplateTTLSeconds < 60 || i.TemplateTTLSeconds > 86400 || i.Format != "netflow9" && i.Format != "ipfix") {
+			return fmt.Errorf("template TTL requires v9/IPFIX and 60-86400 seconds")
 		}
 		if i.Format == "suricata" {
 			eveCount++
@@ -91,7 +95,7 @@ func (c Config) Validate() error {
 		if i.Protocol != "udp" && i.Protocol != "tcp" && i.Protocol != "tls" {
 			return fmt.Errorf("unsupported transport")
 		}
-		if i.Format == "netflow5" && i.Protocol != "udp" || i.Format == "suricata" && i.Protocol == "udp" {
+		if (i.Format == "netflow5" || i.Format == "netflow9" || i.Format == "ipfix") && i.Protocol != "udp" || i.Format == "suricata" && i.Protocol == "udp" {
 			return fmt.Errorf("incompatible format and transport")
 		}
 		addr, e := netip.ParseAddrPort(i.Listen)

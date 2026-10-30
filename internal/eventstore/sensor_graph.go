@@ -42,6 +42,9 @@ func sensorMatches(a telemetry.ChainStep, n telemetry.Normalized) bool {
 	if a.Code != "5156" || w == nil || o == nil || n.Status != "parsed" || o.Protocol != 6 || w.Protocol != "6" || !telemetry.RemoteAddress(w.SourceAddress) || !telemetry.RemoteAddress(w.DestinationAddress) {
 		return false
 	}
+	if (o.Kind == "netflow9" || o.Kind == "ipfix") && (o.Start == nil || o.End == nil) {
+		return false
+	}
 	sp, e1 := strconv.Atoi(w.SourcePort)
 	dp, e2 := strconv.Atoi(w.DestinationPort)
 	if e1 != nil || e2 != nil || sp == 0 || dp == 0 || w.SourceAddress != n.SourceIP || w.DestinationAddress != n.DestinationIP || sp != o.SourcePort || dp != n.DestinationPort {

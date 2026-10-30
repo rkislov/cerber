@@ -75,3 +75,8 @@ test('sensor observation keeps observer separate and does not invent an account'
  const s=renderSetup();s.ctx.renderChainGraph(s.root,m);const event=s.all(s.root).find(n=>n.attrs.role==='button'&&n.attrs['aria-label']?.startsWith('2.'));event.handlers.click();assert.ok(s.all(s.root).some(n=>n.textContent.includes('Сенсор-наблюдатель (не участник соединения)')));
  const conflicting={...o,network:{...o.network,source_port:12346}};assert.equal(model([d,detection([conflicting])]).conflicts,1);
 });
+
+test('IPFIX graph shows template and observation domain without turning observer into user',()=>{
+ const ctx=vm.createContext({});vm.runInContext(source,ctx);const facts=ctx.chainWindowsFacts({network:{kind:'ipfix',input:'router',exporter:'192.0.2.254',exporter_port:50000,template_id:256,observation_domain:0,export_sequence:42,template_hash:'abc'}});
+ assert.ok(facts.some(([k,v])=>k==='Домен наблюдения'&&v==='0'));assert.ok(facts.some(([k,v])=>k==='Шаблон / последовательность'&&v==='256 / 42'));assert.ok(facts.some(([k,v])=>k==='SHA-256 шаблона'&&v==='abc'));
+});
