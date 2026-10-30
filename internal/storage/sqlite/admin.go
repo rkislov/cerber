@@ -16,7 +16,7 @@ import (
 
 func (s *Store) AdminOverview(ctx context.Context, now time.Time, p alerts.Policy) (admin.Overview, error) {
 	var v admin.Overview
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(NOT a.revoked AND s.last_seen_at>=?),0),COALESCE(SUM(NOT a.revoked AND s.last_seen_at<?),0),COALESCE(SUM(NOT a.revoked AND s.last_seen_at IS NULL),0),COALESCE(SUM(a.revoked),0),COALESCE(SUM(NOT a.revoked AND s.latest_inventory_id IS NOT NULL AND s.latest_inventory_at<?),0),COALESCE(SUM(NOT a.revoked AND s.latest_inventory_id IS NULL),0) FROM agents a LEFT JOIN agent_status s ON s.agent_id=a.id`, stamp(now.Add(-p.OfflineAfter)), stamp(now.Add(-p.OfflineAfter)), stamp(now.Add(-p.InventoryMaxAge))).Scan(&v.Agents, &v.Online, &v.Offline, &v.NeverSeen, &v.Revoked, &v.InventoryStale, &v.InventoryMissing)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(NOT a.revoked AND s.last_seen_at>=?),0),COALESCE(SUM(NOT a.revoked AND s.last_seen_at<?),0),COALESCE(SUM(NOT a.revoked AND s.last_seen_at IS NULL),0),COALESCE(SUM(a.revoked),0),COALESCE(SUM(NOT a.revoked AND COALESCE(json_type(h.payload,'$.sensor'),'')!='object' AND s.latest_inventory_id IS NOT NULL AND s.latest_inventory_at<?),0),COALESCE(SUM(NOT a.revoked AND COALESCE(json_type(h.payload,'$.sensor'),'')!='object' AND s.latest_inventory_id IS NULL),0) FROM agents a LEFT JOIN agent_status s ON s.agent_id=a.id LEFT JOIN agent_heartbeats h ON h.agent_id=a.id`, stamp(now.Add(-p.OfflineAfter)), stamp(now.Add(-p.OfflineAfter)), stamp(now.Add(-p.InventoryMaxAge))).Scan(&v.Agents, &v.Online, &v.Offline, &v.NeverSeen, &v.Revoked, &v.InventoryStale, &v.InventoryMissing)
 	if err != nil {
 		return v, err
 	}

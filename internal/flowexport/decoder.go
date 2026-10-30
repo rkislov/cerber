@@ -363,3 +363,15 @@ func (d *Decoder) Decode(input string, peer netip.AddrPort, p []byte, now time.T
 	d.sessions[k] = s
 	return out, nil
 }
+
+// ForgetInput discards templates when admission/TTL controls change. Buffered
+// evidence already contains its template and is unaffected.
+func (d *Decoder) ForgetInput(input string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for k := range d.sessions {
+		if k.input == input {
+			delete(d.sessions, k)
+		}
+	}
+}

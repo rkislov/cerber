@@ -131,6 +131,15 @@ func (s *Store) AcceptHeartbeat(ctx context.Context, id, hash string, h ingest.H
 			return receipt, err
 		}
 	}
+	if h.Sensor != nil {
+		policy, e := sensorPolicy(ctx, tx, id)
+		if e != nil {
+			return receipt, e
+		}
+		if policy.Revision > 0 {
+			receipt.SensorPolicy = &policy
+		}
+	}
 	return receipt, tx.Commit()
 }
 
@@ -141,16 +150,20 @@ type rowsQuerier interface {
 func (s *Store) AgentStatuses(ctx context.Context, asset, after string, limit int) ([]ingest.AgentStatus, error) {
 	return agentStatuses(ctx, s.db, asset, after, limit)
 }
-func agentStatuses(ctx context.Context, q rowsQuerier, asset, after string, limit int) ([]ingest.AgentStatus, error) {
+func agentStatuses(ctx context.Context, q rowsQuerier, asset, after string, limit int, sensorOnly ...bool) ([]ingest.AgentStatus, error) {
 	if limit < 1 || limit > 1001 {
 		return nil, fmt.Errorf("agent limit must be 1–1001")
 	}
 	if after != "" && !ingest.Identifier(after) {
 		return nil, fmt.Errorf("invalid agent cursor")
 	}
+	filter := ""
+	if len(sensorOnly) > 0 && sensorOnly[0] {
+		filter = " AND json_type(h.payload,'$.sensor')='object'"
+	}
 	rows, err := q.QueryContext(ctx, `SELECT a.id,a.asset_id,a.created_at,a.revoked,s.last_seen_at,s.last_report_at,s.latest_inventory_at,s.latest_inventory_id,h.received_at,h.payload,assets.name,assets.ip
  FROM agents a JOIN assets ON assets.id=a.asset_id LEFT JOIN agent_status s ON s.agent_id=a.id LEFT JOIN agent_heartbeats h ON h.agent_id=a.id
- WHERE a.id>? AND (?='' OR a.asset_id=?) ORDER BY a.id LIMIT ?`, after, asset, asset, limit)
+ WHERE a.id>? AND (?='' OR a.asset_id=?) `+filter+` ORDER BY a.id LIMIT ?`, after, asset, asset, limit)
 	if err != nil {
 		return nil, err
 	}

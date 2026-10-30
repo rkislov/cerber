@@ -29,12 +29,19 @@ import (
 	"github.com/rkislov/cerber/internal/eventstore"
 	"github.com/rkislov/cerber/internal/flowexport"
 	"github.com/rkislov/cerber/internal/ingest"
+	"github.com/rkislov/cerber/internal/sensorstate"
 	"github.com/rkislov/cerber/internal/telemetry"
 )
 
 const maxMessage = 12000
 
 type Receiver struct {
+	controlMu                                                          sync.RWMutex
+	metricsMu                                                          sync.Mutex
+	metrics                                                            map[string]*inputMetrics
+	started, sampleAt                                                  time.Time
+	policy                                                             sensorstate.Policy
+	policyPath, fingerprint, configError                               string
 	flows                                                              flowexport.Decoder
 	flowTemplates, flowUnknown, flowWithdrawals, flowResets, flowStale atomic.Uint64
 	spool                                                              eventcollector.Spool
@@ -45,18 +52,34 @@ type Receiver struct {
 }
 
 func newReceiver(spool eventcollector.Spool, agent string) *Receiver {
-	return &Receiver{spool: spool, agent: agent, states: map[string]telemetry.SourceHealth{}}
+	now := time.Now().UTC()
+	return &Receiver{spool: spool, agent: agent, states: map[string]telemetry.SourceHealth{}, metrics: map[string]*inputMetrics{}, started: now, sampleAt: now}
 }
 
 // accept commits before reading the next message on a stream. TCP itself has no
 // durable application acknowledgement. UDP is best effort; rejected datagrams
 // (including a full spool) are counted, never represented as delivered events.
-func (r *Receiver) accept(ctx context.Context, i Input, peer string, data []byte, ports ...uint16) error {
+func (r *Receiver) accept(ctx context.Context, i Input, peer string, data []byte, ports ...uint16) (retErr error) {
 	r.received.Add(1)
 	fail := func(e error) error { r.rejected.Add(1); return e }
 	v := telemetry.SensorEnvelope{Input: i.ID, Peer: peer, Transport: i.Protocol, Profile: i.Format}
 	count := 1
 	var decoded flowexport.Result
+	stored := 0
+	code := ""
+	port := uint16(0)
+	if len(ports) > 0 {
+		port = ports[0]
+	}
+	defer func() {
+		if code == "" {
+			code = errorCode(retErr)
+		}
+		if code == "" && decoded.UnknownSets > 0 {
+			code = "missing_template"
+		}
+		r.record(i, peer, port, data, decoded, stored, code, true)
+	}()
 	if i.Format == "netflow9" || i.Format == "ipfix" {
 		if len(ports) != 1 || ports[0] == 0 {
 			return fail(telemetry.ErrInvalid)
@@ -147,6 +170,10 @@ func (r *Receiver) accept(ctx context.Context, i Input, peer string, data []byte
 	}
 	state := telemetry.SourceHealth{Source: i.Source(), State: "ok", LastReadAt: &now}
 	if e != nil {
+		code = "spool_error"
+		if errors.Is(e, telemetry.ErrFull) {
+			code = "spool_full"
+		}
 		state.State = "error"
 		state.Code = "spool_error"
 		if errors.Is(e, telemetry.ErrFull) {
@@ -162,6 +189,7 @@ func (r *Receiver) accept(ctx context.Context, i Input, peer string, data []byte
 	}
 	r.states[i.Source()] = state
 	r.stored.Add(uint64(count))
+	stored = count
 	return nil
 }
 
@@ -241,6 +269,7 @@ func (r *Receiver) serveStream(ctx context.Context, l net.Listener, i Input) err
 		peer, e := netip.ParseAddrPort(c.RemoteAddr().String())
 		if e != nil || !i.permits(peer.Addr()) {
 			r.rejected.Add(1)
+			r.record(i, "", 0, nil, flowexport.Result{}, 0, "peer_denied", false)
 			c.Close()
 			continue
 		}
@@ -248,6 +277,7 @@ func (r *Receiver) serveStream(ctx context.Context, l net.Listener, i Input) err
 		case slots <- struct{}{}:
 		default:
 			r.rejected.Add(1)
+			r.record(i, "", 0, nil, flowexport.Result{}, 0, "connection_limit", false)
 			c.Close()
 			continue
 		}
@@ -265,10 +295,11 @@ func (r *Receiver) serveStream(ctx context.Context, l net.Listener, i Input) err
 				if e != nil {
 					if e != io.EOF && ctx.Err() == nil {
 						r.rejected.Add(1)
+						r.record(i, "", 0, nil, flowexport.Result{}, 0, "framing_error", false)
 					}
 					return
 				}
-				if e = r.accept(ctx, i, peer.Addr().Unmap().String(), data); e != nil {
+				if e = r.receive(ctx, i, peer, data); e != nil {
 					return
 				}
 			}
@@ -288,11 +319,7 @@ func (r *Receiver) serveUDP(ctx context.Context, c *net.UDPConn, i Input) error 
 			}
 			return e
 		}
-		if n > maxMessage || !i.permits(peer.Addr()) {
-			r.rejected.Add(1)
-			continue
-		}
-		_ = r.accept(ctx, i, peer.Addr().Unmap().String(), buf[:n], peer.Port())
+		_ = r.receive(ctx, i, peer, buf[:n])
 	}
 }
 
@@ -322,6 +349,9 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 	}
 	defer spool.Close()
 	r := newReceiver(spool, credentials.AgentID)
+	if e = r.configure(c); e != nil {
+		return e
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var closers []io.Closer
@@ -412,8 +442,35 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 		}
 		r.mu.Unlock()
 		h.Enabled = true
+		r.metricsMu.Lock()
+		for _, i := range c.Inputs {
+			if i.Protocol == "file" {
+				for _, sh := range h.Sources {
+					if sh.Source == i.Source() {
+						m := r.metrics[i.ID]
+						m.status.LastMessageAt = sh.LastReadAt
+						if sh.State == "ok" {
+							m.status.State = "receiving"
+						} else if sh.State == "error" || sh.State == "blocked" {
+							m.status.State = "error"
+							m.status.LastError = sh.Code
+							at := time.Now().UTC()
+							m.status.LastErrorAt = &at
+						}
+					}
+				}
+			}
+		}
+		r.metricsMu.Unlock()
 		if !time.Now().Before(nextHeartbeat) {
-			_, e = client.Heartbeat(cycleCtx, ingest.Heartbeat{SchemaVersion: 1, AgentID: credentials.AgentID, ObservedAt: time.Now().UTC(), Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectionStatus: "not_attempted", DeliveryStatus: "not_attempted", Events: &h})
+			sensor := r.snapshot(c.Inputs)
+			receipt, heartbeatErr := client.Heartbeat(cycleCtx, ingest.Heartbeat{SchemaVersion: 1, AgentID: credentials.AgentID, ObservedAt: time.Now().UTC(), Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectionStatus: "not_attempted", DeliveryStatus: "not_attempted", Events: &h, Sensor: &sensor})
+			e = heartbeatErr
+			if e == nil && receipt.SensorPolicy != nil {
+				if applyErr := r.applyPolicy(*receipt.SensorPolicy, true); applyErr != nil {
+					fmt.Fprintln(log, "sensor policy could not be applied")
+				}
+			}
 			if e != nil && ctx.Err() == nil {
 				fmt.Fprintf(log, "sensor heartbeat: %v\n", e)
 			}
