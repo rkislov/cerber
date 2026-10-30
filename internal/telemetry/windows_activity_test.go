@@ -15,3 +15,13 @@ func TestActivityKeepsActorSeparate(t *testing.T) {
 		t.Fatal("7045 invented actor", n)
 	}
 }
+
+func TestWFPHasNoInventedAccount(t *testing.T) {
+	n := flowNormalize(t, 5156, map[string]string{"ProcessID": "42", "Application": "test.exe", "SourceAddress": "::ffff:192.0.2.1", "DestAddress": "192.0.2.2", "SourcePort": "1234", "DestPort": "443", "Protocol": "6", "Direction": "%%14593"})
+	if n.Class != "network_connection" || n.WindowsActivity.ProcessID != "42" || n.SourceIP != "192.0.2.1" || n.User != "" || n.Identity.AccountSID != "" {
+		t.Fatal(n)
+	}
+	if WindowsPID("0x2a") != "42" || WindowsPID("-1") != "" {
+		t.Fatal("PID parsing")
+	}
+}

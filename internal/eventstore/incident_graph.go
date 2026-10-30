@@ -107,6 +107,9 @@ func (s *Store) IncidentGraph(ctx context.Context, id string) (correlation.Inves
 		if err = serviceConfirmations(ctx, tx, c, allow); err != nil {
 			return out, err
 		}
+		if err = networkContext(ctx, tx, c, allow); err != nil {
+			return out, err
+		}
 		out.Truncated = out.Truncated || truncated || c.Truncated
 		c.Limitations += " Контекст проверен по текущей версии правила, группам и исключениям. Контекст процессов/служб/заданий добавлен на момент открытия графа из оперативного журнала; до 20 шагов, окно 30 минут. 7045 не содержит SID/сеанса инициатора и автоматически к пользователю не привязывается."
 	}
