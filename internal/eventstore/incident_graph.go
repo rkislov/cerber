@@ -33,7 +33,7 @@ func (s *Store) IncidentGraph(ctx context.Context, id string) (correlation.Inves
 	if e != nil {
 		return out, e
 	}
-	rows, e := tx.QueryContext(ctx, `SELECT d.sequence,d.payload,d.state,d.acknowledged_by FROM incident_detections l JOIN detections d ON d.id=l.detection_id WHERE l.incident_id=? AND json_extract(d.payload,'$.chain.version')=1 ORDER BY d.event_time DESC,d.sequence DESC LIMIT 21`, id)
+	rows, e := tx.QueryContext(ctx, `SELECT d.sequence,d.payload,d.state,d.acknowledged_by FROM incident_detections l JOIN detections d ON d.id=l.detection_id WHERE l.incident_id=? AND json_extract(d.payload,'$.chain.version') IN (1,2) ORDER BY d.event_time DESC,d.sequence DESC LIMIT 21`, id)
 	if e != nil {
 		return out, e
 	}

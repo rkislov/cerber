@@ -13,18 +13,20 @@ import (
 )
 
 var chainIndexes = map[string]string{
-	"normalized_chain_account": `CREATE INDEX IF NOT EXISTS normalized_chain_account ON normalized_events(json_extract(payload,'$.identity.account_key'),event_time,sequence) WHERE json_extract(payload,'$.identity.account_key') IS NOT NULL`,
-	"normalized_chain_guid":    `CREATE INDEX IF NOT EXISTS normalized_chain_guid ON normalized_events(json_extract(payload,'$.identity.session_guid'),event_time,sequence) WHERE json_extract(payload,'$.identity.session_guid') IS NOT NULL`,
-	"normalized_chain_ssh":     `CREATE INDEX IF NOT EXISTS normalized_chain_ssh ON normalized_events(json_extract(payload,'$.identity.ssh_key'),event_time,sequence) WHERE json_extract(payload,'$.identity.ssh_key') IS NOT NULL`,
-	"detection_chain_group":    `CREATE INDEX IF NOT EXISTS detection_chain_group ON detections(rule,json_extract(payload,'$.group_key'),event_time) WHERE rule LIKE 'chain.%'`,
+	"normalized_credential_guid": `CREATE INDEX IF NOT EXISTS normalized_credential_guid ON normalized_events(json_extract(payload,'$.windows_auth.target_guid'),event_time,sequence) WHERE json_extract(payload,'$.windows_auth.target_guid') IS NOT NULL`,
+	"normalized_actor_session":   `CREATE INDEX IF NOT EXISTS normalized_actor_session ON normalized_events(agent_id,json_extract(payload,'$.identity.local_session'),event_time,sequence) WHERE json_extract(payload,'$.identity.local_session') IS NOT NULL`,
+	"normalized_chain_account":   `CREATE INDEX IF NOT EXISTS normalized_chain_account ON normalized_events(json_extract(payload,'$.identity.account_key'),event_time,sequence) WHERE json_extract(payload,'$.identity.account_key') IS NOT NULL`,
+	"normalized_chain_guid":      `CREATE INDEX IF NOT EXISTS normalized_chain_guid ON normalized_events(json_extract(payload,'$.identity.session_guid'),event_time,sequence) WHERE json_extract(payload,'$.identity.session_guid') IS NOT NULL`,
+	"normalized_chain_ssh":       `CREATE INDEX IF NOT EXISTS normalized_chain_ssh ON normalized_events(json_extract(payload,'$.identity.ssh_key'),event_time,sequence) WHERE json_extract(payload,'$.identity.ssh_key') IS NOT NULL`,
+	"detection_chain_group":      `CREATE INDEX IF NOT EXISTS detection_chain_group ON detections(rule,json_extract(payload,'$.group_key'),event_time) WHERE rule LIKE 'chain.%'`,
 }
 
 func (s *Store) ensureChainIndexes(ctx context.Context) error {
 	var present int
-	if e := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN ('normalized_chain_account','normalized_chain_guid','normalized_chain_ssh','detection_chain_group')`).Scan(&present); e != nil {
+	if e := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN ('normalized_chain_account','normalized_chain_guid','normalized_chain_ssh','detection_chain_group','normalized_credential_guid','normalized_actor_session')`).Scan(&present); e != nil {
 		return e
 	}
-	if present == 4 {
+	if present == len(chainIndexes) {
 		return nil
 	}
 	if s.path != ":memory:" {
@@ -128,12 +130,26 @@ func (r *ruleRuntime) evaluateChain(ctx context.Context, tx *sql.Tx, rule string
 	if !eligible {
 		return nil, "Нет подходящего SID, GUID или отпечатка ключа; совпадения имён и локальных ID между узлами не используются", false, nil
 	}
-	h, truncated, e := r.chainHistory(ctx, tx, rule, n)
+	var h []telemetry.Normalized
+	var truncated bool
+	if correlation.WindowsFlowRule(rule) {
+		h, truncated, e = r.windowsFlowHistory(ctx, tx, rule, n)
+	} else {
+		h, truncated, e = r.chainHistory(ctx, tx, rule, n)
+	}
 	if e != nil {
 		return nil, "", false, e
 	}
-	d := correlation.Chain(rule, n, h, v.Config.Threshold, truncated)
+	var d *telemetry.Detection
+	if correlation.WindowsFlowRule(rule) {
+		d = correlation.WindowsFlow(rule, n, h, v.Config.Threshold, truncated)
+	} else {
+		d = correlation.Chain(rule, n, h, v.Config.Threshold, truncated)
+	}
 	if d == nil {
+		if correlation.WindowsFlowRule(rule) {
+			return nil, "Нет подходящей связи с 4769/4648: нужны успешный последующий сетевой 4624, ненулевой нужный GUID, точное доменное имя, порядок времени и разные узлы. Для 4769 требуется Status 0x0.", truncated, nil
+		}
 		return nil, "Недостаточно различных узлов или нет упорядоченной связи входа и очистки в одном локальном сеансе", truncated, nil
 	}
 	for j, step := range d.Chain.Steps {

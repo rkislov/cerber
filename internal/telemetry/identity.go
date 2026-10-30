@@ -13,6 +13,7 @@ import (
 // Identity contains source-reported identifiers, not directory attestation.
 // LocalSession is scoped to AgentID + AssetID and must never join hosts alone.
 type Identity struct {
+	AccountRef   string `json:"account_ref,omitempty"`
 	AccountKey   string `json:"account_key,omitempty"`
 	AccountSID   string `json:"account_sid,omitempty"`
 	Realm        string `json:"realm,omitempty"`
@@ -50,7 +51,14 @@ func windowsIdentity(fields map[string]string, computer, prefix string) *Identit
 	if n, e := strconv.ParseUint(strings.TrimPrefix(strings.ToLower(fields[prefix+"LogonId"]), "0x"), 16, 64); strings.HasPrefix(strings.ToLower(fields[prefix+"LogonId"]), "0x") && e == nil && n > 0 {
 		i.LocalSession = "0x" + strconv.FormatUint(n, 16)
 	}
-	guid := strings.ToLower(strings.Trim(fields["LogonGuid"], "{}"))
+	i.SessionGUID = WindowsGUID(fields["LogonGuid"])
+	i.AccountRef = WindowsAccountRef(fields[prefix+"UserName"], fields[prefix+"DomainName"], computer)
+	i.LogonType, _ = strconv.Atoi(fields["LogonType"])
+	return i
+}
+
+func WindowsGUID(value string) string {
+	guid := strings.ToLower(strings.Trim(value, "{}"))
 	if len(guid) == 36 && guid[8] == '-' && guid[13] == '-' && guid[18] == '-' && guid[23] == '-' {
 		raw := strings.ReplaceAll(guid, "-", "")
 		if b, e := hex.DecodeString(raw); e == nil && len(b) == 16 {
@@ -59,12 +67,11 @@ func windowsIdentity(fields map[string]string, computer, prefix string) *Identit
 				nonzero = nonzero || v != 0
 			}
 			if nonzero {
-				i.SessionGUID = guid
+				return guid
 			}
 		}
 	}
-	i.LogonType, _ = strconv.Atoi(fields["LogonType"])
-	return i
+	return ""
 }
 func sshIdentity(fields func(string) string, msg string) *Identity {
 	i := &Identity{Computer: fields("_HOSTNAME")}

@@ -10,7 +10,7 @@ function setup(){
  const errors=[];
  const document={getElementById:$,querySelectorAll:()=>[]};
  const ctx=vm.createContext({document,$,el:()=>node(),api:async()=>({title:'ThreatFox',id:'threatfox.ip_match',version:1,false_positives:null,investigation:null,references:null}),date:String,short:String,error:e=>errors.push(e),URL});
- for(const name of ['dialogs.js','attack.js','events.js','investigation.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'../static',name),'utf8'),ctx);
+ for(const name of ['dialogs.js','attack.js','events.js','investigation.js','chain-graph.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'../static',name),'utf8'),ctx);
  return {$,ctx,errors};
 }
 test('ThreatFox rule with absent optional lists opens repeatedly and switches inspector layers',async()=>{

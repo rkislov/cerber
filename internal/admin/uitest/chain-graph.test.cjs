@@ -53,3 +53,13 @@ test('closing during graph load does not render a hidden zero-width graph; reope
  await new Promise(resolve=>setImmediate(resolve));
  assert.ok(s.all(s.root).some(n=>n.textContent.includes('пока нет сохранённой межузловой цепочки')));
 });
+test('Windows v2 graph distinguishes credential attempt, ticket service and destination logon',()=>{
+ const a=step(1),c=step(2),k=step(3,'dc'),n=step(4,'files');c.action='explicit_credentials';c.outcome='unknown';c.code='4648';c.windows_auth={target_account:'lab\\bob',target_guid:'target-guid',process:'runas.exe'};k.action='kerberos_service_ticket';k.outcome='success';k.code='4769';k.user='bob@lab';k.identity={computer:'dc',session_guid:'target-guid'};k.windows_auth={target_account:'bob@lab',service:'files$',service_sid:'service-sid',status:'0x0'};n.user='lab\\bob';n.identity.account_sid='other-sid';
+ const d=detection([a,c,k,n],[{from:c.event_id,to:k.event_id,kind:'credential_ticket_guid',basis:'target GUID and exact name'},{from:k.event_id,to:n.event_id,kind:'kerberos_guid',basis:'ticket context, not proof of redemption'}]);d.chain.version=2;
+ const m=model([d]);assert.equal(m.events.length,4);const s=renderSetup();s.ctx.renderChainGraph(s.root,m);let nodes=s.all(s.root);assert.ok(nodes.some(x=>x.textContent.includes('Попытка использования реквизитов')));assert.ok(nodes.some(x=>x.textContent.includes('Kerberos: запрос успешен')));
+ const ticket=nodes.find(x=>x.attrs.role==='button'&&x.attrs['aria-label']?.startsWith('3.'));ticket.handlers.click();nodes=s.all(s.root);assert.ok(nodes.some(x=>x.textContent==='SID службы (не пользователя): service-sid'));assert.ok(!nodes.some(x=>x.textContent==='SID: service-sid'));
+});
+test('older chain snapshots can merge missing code/outcome enrichment without false conflicts',()=>{
+ const a=step(1),newer={...a,code:'4624',outcome:'success',identity:{...a.identity,account_ref:'lab\\alice'}};const d=detection([newer]);d.chain.version=2;
+ const m=model([detection([a]),d]);assert.equal(m.conflicts,0);assert.equal(m.events.length,1);assert.equal(m.events[0].code,'4624');
+});
