@@ -87,38 +87,39 @@ func (b Batch) Validate() error {
 	return nil
 }
 func ValidSource(s string) bool {
-	return s == "agent:ioc" || s == "network:cef" || s == "journald" || s == "windows:Security" || s == "windows:System" || s == "windows:Application"
+	return SensorSource(s) || s == "agent:ioc" || s == "network:cef" || s == "journald" || s == "windows:Security" || s == "windows:System" || s == "windows:Application"
 }
 
 type Normalized struct {
-	WindowsActivity *WindowsActivity   `json:"windows_activity,omitempty"`
-	WindowsAuth     *WindowsAuth       `json:"windows_auth,omitempty"`
-	Identity        *Identity          `json:"identity,omitempty"`
-	Attack          *attack.Assessment `json:"attack,omitempty"`
-	FilePath        string             `json:"file_path,omitempty"`
-	SHA256          string             `json:"sha256,omitempty"`
-	MD5             string             `json:"md5,omitempty"`
-	Product         string             `json:"product,omitempty"`
-	Device          string             `json:"device,omitempty"`
-	DestinationIP   string             `json:"destination_ip,omitempty"`
-	DestinationPort int                `json:"destination_port,omitempty"`
-	Request         string             `json:"request,omitempty"`
-	Sequence        int64              `json:"sequence"`
-	ID              string             `json:"id"`
-	AgentID         string             `json:"agent_id"`
-	AssetID         string             `json:"asset_id"`
-	Source          string             `json:"source"`
-	EventTime       time.Time          `json:"event_time"`
-	ReceivedAt      time.Time          `json:"received_at"`
-	Parser          string             `json:"parser"`
-	Status          string             `json:"status"`
-	Class           string             `json:"class"`
-	Action          string             `json:"action"`
-	Outcome         string             `json:"outcome"`
-	User            string             `json:"user,omitempty"`
-	SourceIP        string             `json:"source_ip,omitempty"`
-	Code            string             `json:"code,omitempty"`
-	Message         string             `json:"message"`
+	Network         *NetworkObservation `json:"network,omitempty"`
+	WindowsActivity *WindowsActivity    `json:"windows_activity,omitempty"`
+	WindowsAuth     *WindowsAuth        `json:"windows_auth,omitempty"`
+	Identity        *Identity           `json:"identity,omitempty"`
+	Attack          *attack.Assessment  `json:"attack,omitempty"`
+	FilePath        string              `json:"file_path,omitempty"`
+	SHA256          string              `json:"sha256,omitempty"`
+	MD5             string              `json:"md5,omitempty"`
+	Product         string              `json:"product,omitempty"`
+	Device          string              `json:"device,omitempty"`
+	DestinationIP   string              `json:"destination_ip,omitempty"`
+	DestinationPort int                 `json:"destination_port,omitempty"`
+	Request         string              `json:"request,omitempty"`
+	Sequence        int64               `json:"sequence"`
+	ID              string              `json:"id"`
+	AgentID         string              `json:"agent_id"`
+	AssetID         string              `json:"asset_id"`
+	Source          string              `json:"source"`
+	EventTime       time.Time           `json:"event_time"`
+	ReceivedAt      time.Time           `json:"received_at"`
+	Parser          string              `json:"parser"`
+	Status          string              `json:"status"`
+	Class           string              `json:"class"`
+	Action          string              `json:"action"`
+	Outcome         string              `json:"outcome"`
+	User            string              `json:"user,omitempty"`
+	SourceIP        string              `json:"source_ip,omitempty"`
+	Code            string              `json:"code,omitempty"`
+	Message         string              `json:"message"`
 }
 type RawRecord struct {
 	Archived         bool
@@ -129,6 +130,7 @@ type RawRecord struct {
 	Raw              Raw
 }
 type Detection struct {
+	ObserverOnly   bool                `json:"observer_only,omitempty"`
 	Chain          *EventChain         `json:"chain,omitempty"`
 	Policy         *rulepolicy.Applied `json:"policy,omitempty"`
 	Attack         *attack.Assessment  `json:"attack,omitempty"`

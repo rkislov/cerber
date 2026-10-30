@@ -17,6 +17,9 @@ var sshSuccess = regexp.MustCompile(`^Accepted (?:password|publickey|keyboard-in
 // Normalize is deterministic. Unparseable input is retained in quarantine, never discarded.
 func Normalize(r RawRecord) Normalized {
 	n := Normalized{Sequence: r.Sequence, ID: ID(r.AgentID, r.Raw.ID), AgentID: r.AgentID, AssetID: r.AssetID, Source: r.Raw.Source, ReceivedAt: r.ReceivedAt, EventTime: r.Raw.ObservedAt, Parser: "native-auth/1", Status: "parsed", Class: "system", Action: "log", Outcome: "unknown"}
+	if SensorSource(r.Raw.Source) {
+		return normalizeSensor(r, n)
+	}
 	if r.Raw.Source == "agent:ioc" {
 		var f struct{ Path, SHA256, MD5, IOC string }
 		if json.Unmarshal(r.Raw.Data, &f) != nil || len(f.SHA256) != 64 || len(f.MD5) != 32 {

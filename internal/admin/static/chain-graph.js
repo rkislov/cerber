@@ -1,13 +1,13 @@
 "use strict";
-function chainStepTitle(step){return {process_exited:"Завершение процесса",connection_permitted:"Разрешено соединение WFP",process_created:"Запуск процесса",service_installed:"Установка службы",task_created:"Создание задания",explicit_credentials:"Попытка использования реквизитов",kerberos_service_ticket:step.outcome==="failure"?"Kerberos: отказ":step.outcome==="success"?"Kerberos: запрос успешен":"Запрос Kerberos-билета",log_cleared:"Очистка аудита",logon:"Успешный вход"}[step.action]||"Событие";}
+function chainStepTitle(step){return {flow_observed:"Наблюдение сетевого потока",ids_alert:"Сигнал Suricata",process_exited:"Завершение процесса",connection_permitted:"Разрешено соединение WFP",process_created:"Запуск процесса",service_installed:"Установка службы",task_created:"Создание задания",explicit_credentials:"Попытка использования реквизитов",kerberos_service_ticket:step.outcome==="failure"?"Kerberos: отказ":step.outcome==="success"?"Kerberos: запрос успешен":"Запрос Kerberos-билета",log_cleared:"Очистка аудита",logon:"Успешный вход"}[step.action]||"Событие";}
 function chainWindowsSourceFacts(step){const w=step.windows_auth||{};return [["Целевые реквизиты / пользователь билета",w.target_account],["TargetLogonGuid реквизитов",w.target_guid],["Запрошенная служба",w.service],["SID службы (не пользователя)",w.service_sid],["Статус Kerberos",w.status],["Тип шифрования билета",w.encryption],["Сервер из 4648",w.target_server],["Процесс инициатора",w.process],["PID процесса",w.process_id]].filter(([,v])=>v);}
 function chainWindowsFacts(step){
  const states={verified:"Подтверждена",pending:"Ожидает проверки",unavailable:"Каталог недоступен",unresolved:"Не подтверждена",unsupported:"Неподдерживаемая запись",foreign_domain:"Другой домен",not_found:"Не найдена",ambiguous:"Неоднозначное имя",mismatch:"Конфликт атрибутов",sid_mismatch:"SID не совпадает",disabled:"Отключена",locked:"Заблокирована",expired:"Срок действия истёк"};
  const observations=step.directory_observations||[{role:"Учётная запись / инициатор",proof:step.identity?.directory},{role:"Целевые реквизиты / билет",proof:step.windows_auth?.directory}];
- const w=step.windows_activity||{};const out=chainWindowsSourceFacts(step);for(const [k,v]of [["Источник соединения",w.source_address? w.source_address+":"+w.source_port:""],["Назначение",w.destination_address?w.destination_address+":"+w.destination_port:""],["Протокол",w.protocol],["Направление",w.direction==="%%14593"?"Исходящее":w.direction==="%%14592"?"Входящее":w.direction],["Процесс",w.process],["PID",w.process_id],["Родитель",w.parent],["PID родителя",w.parent_id],["Командная строка",w.command_line],["Служба / задание",w.name],["Исполняемый файл службы",w.image],["Учётка запуска (не инициатор)",w.run_as],["Целевой SID процесса",w.target_sid]])if(v)out.push([k,v]);for(const {role,proof:p}of observations){if(!p)continue;out.push(["AD · "+role,states[p.state]||p.state]);if(p.checked_at&&Date.parse(p.checked_at)>0)out.push(["Проверено в каталоге",p.checked_at]);if(p.dns)out.push(["DNS / NetBIOS",p.dns+" / "+p.netbios]);if(p.sid)out.push(["SID из AD",p.sid]);if(p.object_guid)out.push(["objectGUID из AD",p.object_guid]);if(p.sam)out.push(["sAMAccountName / UPN",p.sam+" / "+(p.upn||"—")]);}
+ const w=step.windows_activity||{};const out=chainWindowsSourceFacts(step);const o=step.network;if(o){for(const [k,v]of [["Роль узла","Сенсор-наблюдатель (не участник соединения)"],["Отправитель / вход",o.exporter+" / "+o.input],["Источник",step.source_ip+":"+o.source_port],["Назначение",step.destination_ip+":"+step.destination_port],["Протокол",o.protocol],["Поток / сигнатура",o.flow_id||o.signature],["Начало",o.start],["Конец",o.end],["Пакеты / байты",String(o.packets||0)+" / "+String(o.bytes||0)],["Sampling",o.sampling_interval],["Основание времени",o.time_basis]])if(v)out.push([k,String(v)]);}for(const [k,v]of [["Источник соединения",w.source_address? w.source_address+":"+w.source_port:""],["Назначение",w.destination_address?w.destination_address+":"+w.destination_port:""],["Протокол",w.protocol],["Направление",w.direction==="%%14593"?"Исходящее":w.direction==="%%14592"?"Входящее":w.direction],["Процесс",w.process],["PID",w.process_id],["Родитель",w.parent],["PID родителя",w.parent_id],["Командная строка",w.command_line],["Служба / задание",w.name],["Исполняемый файл службы",w.image],["Учётка запуска (не инициатор)",w.run_as],["Целевой SID процесса",w.target_sid]])if(v)out.push([k,v]);for(const {role,proof:p}of observations){if(!p)continue;out.push(["AD · "+role,states[p.state]||p.state]);if(p.checked_at&&Date.parse(p.checked_at)>0)out.push(["Проверено в каталоге",p.checked_at]);if(p.dns)out.push(["DNS / NetBIOS",p.dns+" / "+p.netbios]);if(p.sid)out.push(["SID из AD",p.sid]);if(p.object_guid)out.push(["objectGUID из AD",p.object_guid]);if(p.sam)out.push(["sAMAccountName / UPN",p.sam+" / "+(p.upn||"—")]);}
  return out;
 }
-function chainEdgeTitle(kind){return {service_confirmation:"Запись установки службы",network_tuple:"Совпадение TCP-потока",process_connection:"Соединение процесса",session_activity:"Действие в сеансе",domain_sid:"Общий SID",logon_guid:"SID + Logon GUID",ssh_key:"Общий SSH-ключ",local_session:"Один локальный сеанс",actor_local_session:"Сеанс инициатора",kerberos_guid:"Kerberos GUID + учётка",explicit_target_guid:"Target GUID + учётка",credential_ticket_guid:"Реквизиты → билет"}[kind]||"Сохранённая связь";}
+function chainEdgeTitle(kind){return {sensor_observation:"Наблюдение сенсора",service_confirmation:"Запись установки службы",network_tuple:"Совпадение TCP-потока",process_connection:"Соединение процесса",session_activity:"Действие в сеансе",domain_sid:"Общий SID",logon_guid:"SID + Logon GUID",ssh_key:"Общий SSH-ключ",local_session:"Один локальный сеанс",actor_local_session:"Сеанс инициатора",kerberos_guid:"Kerberos GUID + учётка",explicit_target_guid:"Target GUID + учётка",credential_ticket_guid:"Реквизиты → билет"}[kind]||"Сохранённая связь";}
 
 
 // Display only immutable links saved by the correlator. Shared names, IPs or
@@ -17,7 +17,7 @@ function chainGraphModel(context) {
   const limits = {events:80, links:200, hosts:20};
   let truncated = !!context.truncated, savedChains = 0;
   const hostKey = step => JSON.stringify([step.agent_id,step.asset_id]);
-  const facts = step => JSON.stringify([step.agent_id,step.asset_id,step.at,step.user,step.action,step.source_ip||"",JSON.stringify(chainWindowsSourceFacts(step)),...["account_key","account_sid","realm","session_guid","local_session","ssh_key","computer","logon_type"].map(k=>step.identity?.[k]||"")]);
+  const facts = step => JSON.stringify([step.agent_id,step.asset_id,step.at,step.user,step.action,step.source_ip||"",JSON.stringify(chainWindowsSourceFacts(step)),JSON.stringify(step.windows_activity||null),JSON.stringify(step.network||null),step.destination_ip||"",step.destination_port||0,...["account_key","account_sid","realm","session_guid","local_session","ssh_key","computer","logon_type"].map(k=>step.identity?.[k]||"")]);
   for (const detection of context.anchors || []) {
     const chain = detection.chain;
     if (!chain || ![1,2].includes(chain.version)) continue;
@@ -34,7 +34,8 @@ function chainGraphModel(context) {
       events.get(step.event_id).code ||= step.code;events.get(step.event_id).outcome ||= step.outcome;
       events.get(step.event_id).detections.push({id:detection.id,rule:detection.rule,revision:detection.policy?.revision||0});
     }
-    for (const link of (chain.links || []).slice(0,20)) {
+    if((chain.links||[]).length>200)truncated=true;
+    for (const link of (chain.links || []).slice(0,200)) {
       if (!membership.has(link.from) || !membership.has(link.to) || link.from === link.to) continue;
       const key = JSON.stringify([link.from,link.to,link.kind]);
       if (!links.has(key)) links.set(key,{...link,key,bases:[],detections:[]});
@@ -48,7 +49,7 @@ function chainGraphModel(context) {
   for (const event of [...events.values()].sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)||a.event_id.localeCompare(b.event_id))) {
     if (conflicts.has(event.event_id)) continue;
     if (included.length >= limits.events || !hosts.has(event.hostKey) && hosts.size >= limits.hosts) {truncated=true;continue;}
-    if (!hosts.has(event.hostKey)) hosts.set(event.hostKey,{key:event.hostKey,agent_id:event.agent_id,asset_id:event.asset_id,name:event.identity?.computer||event.agent_id});
+    if (!hosts.has(event.hostKey)) hosts.set(event.hostKey,{key:event.hostKey,agent_id:event.agent_id,asset_id:event.asset_id,name:event.network?"Сенсор · "+event.network.input:event.identity?.computer||event.agent_id});
     included.push(event);
   }
   const ids = new Set(included.map(e=>e.event_id));
@@ -58,6 +59,7 @@ function chainGraphModel(context) {
   for (const step of included) {
     const i=step.identity||{};
     // A key is a credential, not a globally unique local account identity.
+    if(!i.account_sid&&!step.user&&!i.local_session&&!i.session_guid)continue;
     if(i.account_sid)sidAccounts.add(i.account_sid);else nameAccounts.add(JSON.stringify([step.hostKey,step.user||"unknown"]));
     accounts.add(i.account_sid ? "sid:"+i.account_sid : JSON.stringify([step.hostKey,step.user||"unknown"]));
     if (i.local_session) sessions.add(JSON.stringify([step.hostKey,i.local_session]));
@@ -79,7 +81,7 @@ function chainGraphLauncher(root, scope) {
       if(session!==state.csrf||!detail.isConnected||!detail.open)return;
       body.replaceChildren();
       const c=response.context;
-      body.append(el("p","muted","Снимок: "+date(c.at)+(c.incident_id?" · версия карточки "+c.incident_version:"")+". Показаны только цепочки связанных срабатываний; предположительные соседние события не добавляются."));
+      body.append(el("p","muted","Снимок: "+date(c.at)+(c.incident_id?" · версия карточки "+c.incident_version:"")+". Цепочки связанных срабатываний дополнены контекстом процессов и сетевыми наблюдениями. Основание и ограничения указаны у каждой связи."));
       const reload=el("button","text-button","Обновить граф →");reload.type="button";reload.addEventListener("click",load);body.append(reload);
       renderChainGraph(body,chainGraphModel(c));loaded=true;
     } catch(e) {

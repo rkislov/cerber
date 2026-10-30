@@ -55,6 +55,9 @@ func parseEventSources(value string) ([]eventcollector.Source, error) {
 			out = append(out, eventcollector.CEFFile{Path: path, Profile: profile})
 			continue
 		}
+		if telemetry.SensorSource(s) {
+			return nil, fmt.Errorf("network source requires the separate cerber-sensor component")
+		}
 		if s == "network:cef" {
 			return nil, fmt.Errorf("CEF requires cef-fess:PATH or cef-firewall:PATH")
 		}

@@ -105,3 +105,14 @@ func TestIOCStatusCountsUniqueIPsSeparatelyFromPorts(t *testing.T) {
 		t.Fatal(status)
 	}
 }
+
+func TestSensorIOCIsObserverOnly(t *testing.T) {
+	now := time.Now().UTC()
+	x := NewIndex([]IOC{{ID: "1", Type: "ip:port", Value: "192.0.2.2:445", First: now.Add(-time.Hour), Last: now}})
+	for _, source := range []string{"network:syslog", "network:netflow", "network:suricata"} {
+		d := x.Match(telemetry.Normalized{ID: "event", AgentID: "sensor", Source: source, Status: "parsed", EventTime: now, SourceIP: "192.0.2.1", DestinationIP: "192.0.2.2", DestinationPort: 445})
+		if len(d) != 1 || !d[0].ObserverOnly || d[0].Rule != "threatfox.ioc_match" {
+			t.Fatal(source, d)
+		}
+	}
+}

@@ -1,0 +1,28 @@
+[Unit]
+Description=Cerber passive network telemetry sensor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=cerber-sensor
+Group=cerber-sensor
+ExecStart=/opt/cerber-sensor/cerber-sensor -config /etc/cerber-sensor/sensor.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+StateDirectory=cerber-sensor
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+MemoryMax=256M
+CPUQuota=50%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

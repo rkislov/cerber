@@ -67,3 +67,11 @@ test('older chain snapshots can merge missing code/outcome enrichment without fa
 test('directory observations remain separate from immutable source facts across saved chains',()=>{
  const a=step(1),b=step(2,'b');a.identity.directory={state:'verified',sid:'S-1-5-21-1-2-3-1001',checked_at:'2026-10-30T05:00:00Z'};const later={...a,identity:{...a.identity,directory:{state:'disabled',sid:a.identity.directory.sid,checked_at:'2026-10-30T06:00:00Z'}}};const m=model([detection([a,b]),detection([later,b])]);assert.equal(m.conflicts,0);assert.equal(m.events.length,2);assert.equal(m.events[0].directory_observations.length,2);const ctx=vm.createContext({});vm.runInContext(source,ctx);const facts=ctx.chainWindowsFacts(m.events[0]);assert.ok(facts.some(([,v])=>v==='Подтверждена'));assert.ok(facts.some(([,v])=>v==='Отключена'));
 });
+
+test('sensor observation keeps observer separate and does not invent an account',()=>{
+ const a=step(1),o={...step(2,'sensor'),user:'',identity:{},action:'flow_observed',source_ip:'192.0.2.1',destination_ip:'192.0.2.2',destination_port:445,network:{kind:'netflow5',input:'flow',exporter:'192.0.2.254',transport:'udp',protocol:6,source_port:12345,flow_id:'1:0:42'}};
+ const d=detection([a,o],[{from:a.event_id,to:o.event_id,kind:'sensor_observation',basis:'TCP tuple with bounded time; observer is not endpoint'}]);
+ const m=model([d]);assert.equal(m.accounts,1);assert.equal(m.sessions,1);assert.equal(m.hosts.length,2);assert.equal(m.links.length,1);
+ const s=renderSetup();s.ctx.renderChainGraph(s.root,m);const event=s.all(s.root).find(n=>n.attrs.role==='button'&&n.attrs['aria-label']?.startsWith('2.'));event.handlers.click();assert.ok(s.all(s.root).some(n=>n.textContent.includes('Сенсор-наблюдатель (не участник соединения)')));
+ const conflicting={...o,network:{...o.network,source_port:12346}};assert.equal(model([d,detection([conflicting])]).conflicts,1);
+});
