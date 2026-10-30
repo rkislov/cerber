@@ -16,7 +16,7 @@ import (
 )
 
 func (s *Store) ReadEvents(ctx context.Context, q telemetry.Query) ([]telemetry.Normalized, error) {
-	if q.Before < 0 || q.Limit < 1 || q.Limit > 101 || q.AgentID != "" && !telemetry.AgentIdentifier(q.AgentID) || q.Class != "" && q.Class != "firewall" && q.Class != "fess" && q.Class != "kerberos" && q.Class != "credentials" && q.Class != "authentication" && q.Class != "audit" && q.Class != "system" && q.Class != "unknown" || q.Status != "" && q.Status != "parsed" && q.Status != "quarantine" {
+	if q.Before < 0 || q.Limit < 1 || q.Limit > 101 || q.AgentID != "" && !telemetry.AgentIdentifier(q.AgentID) || q.Class != "" && q.Class != "network_connection" && q.Class != "process" && q.Class != "service" && q.Class != "task" && q.Class != "session" && q.Class != "firewall" && q.Class != "fess" && q.Class != "kerberos" && q.Class != "credentials" && q.Class != "authentication" && q.Class != "audit" && q.Class != "system" && q.Class != "unknown" || q.Status != "" && q.Status != "parsed" && q.Status != "quarantine" {
 		return nil, telemetry.ErrInvalid
 	}
 	if q.TimeField != "" && q.TimeField != "event" && q.TimeField != "received" {

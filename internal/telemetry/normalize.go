@@ -125,7 +125,7 @@ func Normalize(r RawRecord) Normalized {
 				n.Identity = windowsIdentity(v.Fields, v.Computer, prefix)
 				n.User = v.Fields[prefix+"UserName"]
 				n.Parser = "windows-session/1"
-			case 4688, 4697, 4698:
+			case 4688, 4689, 4697, 4698, 5156:
 				normalizeWindowsActivity(&n, v.Fields, v.Computer, v.EventID)
 			case 4648, 4769:
 				normalizeWindowsAuth(&n, v.Fields, v.Computer, v.EventID)
