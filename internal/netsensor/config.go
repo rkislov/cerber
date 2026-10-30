@@ -5,6 +5,7 @@ package netsensor
 import (
 	"encoding/json"
 	"fmt"
+	rules "github.com/rkislov/cerber/internal/suricatarules"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"io"
 	"net/netip"
@@ -26,12 +27,13 @@ type Input struct {
 	ClientCA           string   `json:"client_ca,omitempty"`
 }
 type Config struct {
-	SchemaVersion int     `json:"schema_version"`
-	Server        string  `json:"server"`
-	Credentials   string  `json:"credentials"`
-	CACert        string  `json:"ca_cert,omitempty"`
-	Spool         string  `json:"spool"`
-	Inputs        []Input `json:"inputs"`
+	Suricata      *rules.Config `json:"suricata,omitempty"`
+	SchemaVersion int           `json:"schema_version"`
+	Server        string        `json:"server"`
+	Credentials   string        `json:"credentials"`
+	CACert        string        `json:"ca_cert,omitempty"`
+	Spool         string        `json:"spool"`
+	Inputs        []Input       `json:"inputs"`
 }
 
 func Load(path string) (Config, error) {
@@ -63,6 +65,11 @@ func (i Input) Source() string {
 	}
 }
 func (c Config) Validate() error {
+	if c.Suricata != nil {
+		if e := c.Suricata.Validate(); e != nil {
+			return e
+		}
+	}
 	if c.SchemaVersion != 1 || !filepath.IsAbs(c.Spool) || !filepath.IsAbs(c.Credentials) || c.Spool == c.Credentials || c.CACert != "" && !filepath.IsAbs(c.CACert) || len(c.Inputs) > 8 {
 		return fmt.Errorf("absolute separate paths and 0-8 inputs required")
 	}

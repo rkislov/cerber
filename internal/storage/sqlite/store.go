@@ -17,6 +17,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+//go:embed suricata.sql
+var suricataSchema string
+
 //go:embed sensor_monitor.sql
 var sensorMonitorSchema string
 
@@ -110,7 +113,7 @@ func (s *Store) init(ctx context.Context) error {
 	case 7:
 	case 8:
 	case 9:
-	case 10, 11, 12, 13, 14:
+	case 10, 11, 12, 13, 14, 15:
 	default:
 		return fmt.Errorf("unsupported database schema version %d", version)
 	}
@@ -201,6 +204,15 @@ func (s *Store) init(ctx context.Context) error {
 			return err
 		}
 	}
+	if version < 15 {
+		if err = initSuricata(ctx, tx); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=15"); err != nil {
+			return err
+		}
+	}
+
 	return tx.Commit()
 }
 func stamp(t time.Time) string          { return t.UTC().Format("2006-01-02T15:04:05.000000000Z") }

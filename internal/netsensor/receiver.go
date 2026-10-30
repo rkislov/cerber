@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	rules "github.com/rkislov/cerber/internal/suricatarules"
 	"io"
 	"net"
 	"net/netip"
@@ -457,6 +458,12 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 	}
 	defer func() { cancel(); wg.Wait() }()
 	fmt.Fprintln(log, "sensor started; passive inputs; bounded durable queue")
+	var ruleManager *rules.Manager
+	if c.Suricata != nil {
+		ruleManager = rules.NewManager(*c.Suricata, rules.NativeEngine{Config: *c.Suricata}, client.SuricataBundle)
+		wg.Add(1)
+		go func() { defer wg.Done(); ruleManager.Run(ctx) }()
+	}
 	nextHeartbeat := time.Time{}
 	var lastDelivery *time.Time
 	for {
@@ -504,8 +511,16 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 		r.metricsMu.Unlock()
 		if !time.Now().Before(nextHeartbeat) {
 			sensor := r.snapshot(c.Inputs)
+			rs := rules.Status{Version: 1, State: "unconfigured", UpdatedAt: time.Now().UTC()}
+			if ruleManager != nil {
+				rs = ruleManager.Snapshot()
+			}
+			sensor.Rules = &rs
 			receipt, heartbeatErr := client.Heartbeat(cycleCtx, ingest.Heartbeat{SchemaVersion: 1, AgentID: credentials.AgentID, ObservedAt: time.Now().UTC(), Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectionStatus: "not_attempted", DeliveryStatus: "not_attempted", Events: &h, Sensor: &sensor})
 			e = heartbeatErr
+			if e == nil && receipt.Suricata != nil && ruleManager != nil {
+				ruleManager.Offer(*receipt.Suricata)
+			}
 			if e == nil && receipt.SensorPolicy != nil {
 				if applyErr := r.applyPolicy(*receipt.SensorPolicy, true); applyErr != nil {
 					fmt.Fprintln(log, "sensor policy could not be applied")
