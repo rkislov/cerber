@@ -33,7 +33,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("absolute clean Suricata paths required")
 		}
 	}
-	if c.Directory == "/" {
+	if filepath.Dir(c.Directory) == c.Directory {
 		return ErrInvalid
 	}
 	return nil
@@ -101,12 +101,7 @@ func atomic(path string, b []byte) error {
 	if e = os.Rename(name, path); e != nil {
 		return e
 	}
-	d, e := os.Open(filepath.Dir(path))
-	if e != nil {
-		return e
-	}
-	defer d.Close()
-	return d.Sync()
+	return syncDirectory(filepath.Dir(path))
 }
 func (m *Manager) persist(v saved) error {
 	b, e := json.Marshal(v)
@@ -315,12 +310,7 @@ func (m *Manager) apply(parent context.Context, a Assignment) {
 	}
 	m.state(&v, "reloading", "")
 	if e = os.Rename(candidate, m.file("active.rules")); e == nil {
-		d, err := os.Open(m.config.Directory)
-		if err == nil {
-			err = d.Sync()
-			_ = d.Close()
-		}
-		e = err
+		e = syncDirectory(m.config.Directory)
 		if e == nil {
 			e = m.engine.Reload(ctx, a.Bundle.Count)
 		}

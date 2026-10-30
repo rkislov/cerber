@@ -122,7 +122,7 @@ func fixture(t *testing.T) (*Manager, *fakeEngine, Bundle, Bundle) {
 	a.Manifest.Sign(key)
 	b.Manifest.Sign(key)
 	dir := t.TempDir()
-	c := Config{Directory: dir, Binary: "/usr/bin/suricata", YAML: "/etc/suricata/suricata.yaml", Socket: filepath.Join(dir, "socket"), PublicKey: base64.StdEncoding.EncodeToString(pub)}
+	c := Config{Directory: dir, Binary: filepath.Join(dir, "suricata"), YAML: filepath.Join(dir, "suricata.yaml"), Socket: filepath.Join(dir, "socket"), PublicKey: base64.StdEncoding.EncodeToString(pub)}
 	engine := &fakeEngine{}
 	m := NewManager(c, engine, func(_ context.Context, v Manifest) ([]byte, error) {
 		if v.ID == a.Manifest.ID {
