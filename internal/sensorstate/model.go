@@ -16,6 +16,9 @@ var ErrConflict = errors.New("sensor revision conflict")
 var ErrNotFound = errors.New("sensor not found")
 
 type Control struct {
+	Format             string   `json:"format,omitempty"`
+	Listen             string   `json:"listen,omitempty"`
+	Removed            bool     `json:"removed,omitempty"`
 	ID                 string   `json:"id"`
 	Enabled            bool     `json:"enabled"`
 	Allow              []string `json:"allow"`
@@ -68,13 +71,22 @@ type Input struct {
 	IntervalMessages   uint64     `json:"interval_messages"`
 	IntervalBytes      uint64     `json:"interval_bytes"`
 }
+type Definition struct {
+	ID       string `json:"id"`
+	Format   string `json:"format"`
+	Protocol string `json:"protocol"`
+	Listen   string `json:"listen,omitempty"`
+}
 type Status struct {
-	StartedAt       time.Time `json:"started_at"`
-	ObservedAt      time.Time `json:"observed_at"`
-	SampleSeconds   float64   `json:"sample_seconds"`
-	AppliedRevision int64     `json:"applied_revision"`
-	ConfigError     string    `json:"config_error,omitempty"`
-	Inputs          []Input   `json:"inputs"`
+	InputManagement  int          `json:"input_management,omitempty"`
+	BaseInputs       []Definition `json:"base_inputs,omitempty"`
+	ConfigErrorInput string       `json:"config_error_input,omitempty"`
+	StartedAt        time.Time    `json:"started_at"`
+	ObservedAt       time.Time    `json:"observed_at"`
+	SampleSeconds    float64      `json:"sample_seconds"`
+	AppliedRevision  int64        `json:"applied_revision"`
+	ConfigError      string       `json:"config_error,omitempty"`
+	Inputs           []Input      `json:"inputs"`
 }
 
 func Flow(format string) bool {
@@ -94,53 +106,190 @@ func ValidAllow(allow []string) bool {
 	}
 	return true
 }
+
+// ValidateControls accepts legacy admission overrides and explicit listener
+// definitions. Tombstones only suppress local flow inputs; centrally created
+// inputs are deleted by removing their definition from the desired policy.
 func ValidateControls(inputs []Control) error {
-	if len(inputs) > 8 {
+	if len(inputs) > 16 {
 		return ErrInvalid
 	}
 	seen := map[string]bool{}
 	for _, i := range inputs {
-		if !telemetry.AgentIdentifier(i.ID) || seen[i.ID] || !ValidAllow(i.Allow) || i.TemplateTTLSeconds != 0 && (i.TemplateTTLSeconds < 60 || i.TemplateTTLSeconds > 86400) {
+		if !telemetry.AgentIdentifier(i.ID) || seen[i.ID] {
 			return ErrInvalid
 		}
 		seen[i.ID] = true
+		if i.Removed {
+			if i.Format != "" || i.Listen != "" || i.Enabled || len(i.Allow) != 0 || i.TemplateTTLSeconds != 0 {
+				return ErrInvalid
+			}
+			continue
+		}
+		if !ValidAllow(i.Allow) || i.TemplateTTLSeconds != 0 && (i.TemplateTTLSeconds < 60 || i.TemplateTTLSeconds > 86400) {
+			return ErrInvalid
+		}
+		if i.Format != "" || i.Listen != "" {
+			if !Flow(i.Format) || !ValidListen(i.Listen) || i.Format == "netflow5" && i.TemplateTTLSeconds != 0 {
+				return ErrInvalid
+			}
+		}
 	}
 	return nil
 }
+func ValidListen(s string) bool {
+	a, e := netip.ParseAddrPort(s)
+	return e == nil && a.Port() != 0 && a.Addr().Zone() == "" && !a.Addr().Is4In6() && !a.Addr().IsMulticast() && a.Addr().String() != "255.255.255.255"
+}
 
-// Controls may only address existing flow listeners; bind addresses, TLS keys,
-// file paths and SIEM credentials remain under local operator control.
-func Match(inputs []Control, status []Input) error {
-	if e := ValidateControls(inputs); e != nil {
-		return e
+// Overlap uses explicit IPv4/IPv6-only UDP sockets. TCP on the same port is
+// independent; wildcard/specific UDP bindings cannot coexist on one family.
+func Overlap(a, b Definition) bool {
+	if a.Protocol != "udp" || b.Protocol != "udp" {
+		return false
 	}
-	for _, c := range inputs {
-		found := false
-		for _, i := range status {
-			if i.ID == c.ID {
-				found = Flow(i.Format) && i.Protocol == "udp" && (i.Format != "netflow5" || c.TemplateTTLSeconds == 0)
-				break
+	x, ex := netip.ParseAddrPort(a.Listen)
+	y, ey := netip.ParseAddrPort(b.Listen)
+	return ex == nil && ey == nil && x.Port() == y.Port() && x.Addr().Is4() == y.Addr().Is4() && (x.Addr().IsUnspecified() || y.Addr().IsUnspecified() || x.Addr() == y.Addr())
+}
+func Definitions(inputs []Input) []Definition {
+	v := make([]Definition, 0, len(inputs))
+	for _, i := range inputs {
+		v = append(v, Definition{i.ID, i.Format, i.Protocol, i.Listen})
+	}
+	return v
+}
+func Resolve(controls []Control, base []Definition) ([]Definition, error) {
+	if ValidateControls(controls) != nil || len(base) > 8 {
+		return nil, ErrInvalid
+	}
+	result := append([]Definition(nil), base...)
+	for k, i := range result {
+		if i.Listen != "" {
+			if a, e := netip.ParseAddrPort(i.Listen); e == nil {
+				result[k].Listen = a.String()
 			}
 		}
-		if !found {
+	}
+	local := map[string]Definition{}
+	for _, i := range base {
+		if !telemetry.AgentIdentifier(i.ID) {
+			return nil, ErrInvalid
+		}
+		if _, ok := local[i.ID]; ok {
+			return nil, ErrInvalid
+		}
+		local[i.ID] = i
+	}
+	for _, c := range controls {
+		original, exists := local[c.ID]
+		if exists && (!Flow(original.Format) || original.Protocol != "udp") {
+			return nil, ErrInvalid
+		}
+		if c.Removed {
+			if !exists {
+				return nil, ErrInvalid
+			}
+			for k, i := range result {
+				if i.ID == c.ID {
+					result = append(result[:k], result[k+1:]...)
+					break
+				}
+			}
+			continue
+		}
+		if c.Format == "" {
+			if !exists || original.Format == "netflow5" && c.TemplateTTLSeconds != 0 {
+				return nil, ErrInvalid
+			}
+			continue
+		}
+		next := Definition{c.ID, c.Format, "udp", netip.MustParseAddrPort(c.Listen).String()}
+		if exists {
+			for k, i := range result {
+				if i.ID == c.ID {
+					result[k] = next
+					break
+				}
+			}
+		} else {
+			result = append(result, next)
+		}
+	}
+	if len(result) > 8 {
+		return nil, ErrInvalid
+	}
+	for k, i := range result {
+		for _, j := range result[:k] {
+			if i.ID == j.ID || Overlap(i, j) {
+				return nil, ErrInvalid
+			}
+		}
+	}
+	return result, nil
+}
+func Match(inputs []Control, status []Input) error {
+	if ValidateControls(inputs) != nil {
+		return ErrInvalid
+	}
+	for _, c := range inputs {
+		if c.Format != "" || c.Listen != "" || c.Removed {
 			return ErrInvalid
 		}
 	}
-	return nil
+	_, e := Resolve(inputs, Definitions(status))
+	return e
+}
+func MatchStatus(inputs []Control, status Status) error {
+	if status.InputManagement != 1 {
+		return Match(inputs, status.Inputs)
+	}
+	_, e := Resolve(inputs, status.BaseInputs)
+	return e
 }
 func ValidCode(s string) bool {
 	switch s {
-	case "", "invalid_packet", "peer_denied", "input_paused", "message_too_large", "missing_template", "stale_packet", "decoder_limit", "spool_full", "spool_error", "framing_error", "connection_limit", "source_read_failed":
+	case "", "invalid_packet", "peer_denied", "input_paused", "message_too_large", "missing_template", "stale_packet", "decoder_limit", "spool_full", "spool_error", "framing_error", "connection_limit", "source_read_failed", "listener_unavailable":
 		return true
 	}
 	return false
 }
 func (s Status) Validate() error {
-	if s.StartedAt.IsZero() || s.ObservedAt.IsZero() || s.StartedAt.After(s.ObservedAt) || s.SampleSeconds < 0 || s.SampleSeconds > 86400*365 || s.AppliedRevision < 0 || len(s.Inputs) < 1 || len(s.Inputs) > 8 {
+	if s.StartedAt.IsZero() || s.ObservedAt.IsZero() || s.StartedAt.After(s.ObservedAt) || s.SampleSeconds < 0 || s.SampleSeconds > 86400*365 || s.AppliedRevision < 0 || len(s.Inputs) > 8 {
 		return ErrInvalid
 	}
-	if s.ConfigError != "" && s.ConfigError != "policy_invalid" && s.ConfigError != "policy_persist_failed" {
+	if s.ConfigError != "" && s.ConfigError != "policy_invalid" && s.ConfigError != "policy_persist_failed" && s.ConfigError != "policy_bind_failed" {
 		return ErrInvalid
+	}
+	if s.InputManagement < 0 || s.InputManagement > 1 || len(s.BaseInputs) > 8 || s.InputManagement == 0 && len(s.BaseInputs) > 0 || s.ConfigErrorInput != "" && !telemetry.AgentIdentifier(s.ConfigErrorInput) {
+		return ErrInvalid
+	}
+	baseIDs := map[string]bool{}
+	for _, i := range s.BaseInputs {
+		if !telemetry.AgentIdentifier(i.ID) || baseIDs[i.ID] {
+			return ErrInvalid
+		}
+		baseIDs[i.ID] = true
+		switch i.Format {
+		case "netflow5", "netflow9", "ipfix", "syslog", "cef-firewall", "cef-fess", "suricata":
+		default:
+			return ErrInvalid
+		}
+		if i.Protocol == "file" {
+			if i.Format != "suricata" || i.Listen != "" {
+				return ErrInvalid
+			}
+		} else {
+			if i.Protocol != "udp" && i.Protocol != "tcp" && i.Protocol != "tls" {
+				return ErrInvalid
+			}
+			if !ValidListen(i.Listen) {
+				return ErrInvalid
+			}
+		}
+		if Flow(i.Format) && i.Protocol != "udp" {
+			return ErrInvalid
+		}
 	}
 	seen := map[string]bool{}
 	for _, i := range s.Inputs {

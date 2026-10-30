@@ -63,8 +63,8 @@ func (i Input) Source() string {
 	}
 }
 func (c Config) Validate() error {
-	if c.SchemaVersion != 1 || !filepath.IsAbs(c.Spool) || !filepath.IsAbs(c.Credentials) || c.Spool == c.Credentials || c.CACert != "" && !filepath.IsAbs(c.CACert) || len(c.Inputs) < 1 || len(c.Inputs) > 8 {
-		return fmt.Errorf("absolute separate paths and 1-8 inputs required")
+	if c.SchemaVersion != 1 || !filepath.IsAbs(c.Spool) || !filepath.IsAbs(c.Credentials) || c.Spool == c.Credentials || c.CACert != "" && !filepath.IsAbs(c.CACert) || len(c.Inputs) > 8 {
+		return fmt.Errorf("absolute separate paths and 0-8 inputs required")
 	}
 	seen := map[string]bool{}
 	eveFile := false

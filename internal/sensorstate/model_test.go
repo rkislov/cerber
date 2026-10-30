@@ -44,3 +44,46 @@ func TestBoundedSensorHeartbeatAndControls(t *testing.T) {
 		t.Fatal("unbounded exporters")
 	}
 }
+
+func TestManagedListenerScopeLimitsAndBindCollisions(t *testing.T) {
+	base := []sensorstate.Definition{{ID: "fixed", Format: "syslog", Protocol: "udp", Listen: "0.0.0.0:5514"}, {ID: "local", Format: "netflow9", Protocol: "udp", Listen: "127.0.0.1:2059"}}
+	good := sensorstate.Control{ID: "created", Format: "ipfix", Listen: "[::1]:4739", Enabled: true, Allow: []string{"::1/128"}}
+	if defs, e := sensorstate.Resolve([]sensorstate.Control{good}, base); e != nil || len(defs) != 3 {
+		t.Fatal(defs, e)
+	}
+	cases := []sensorstate.Control{good, good, good, good, good, good, good, good}
+	cases[0].ID = "fixed"
+	cases[1].Listen = "127.0.0.1:5514"
+	cases[2].Listen = "localhost:4739"
+	cases[3].Listen = "127.0.0.1:0"
+	cases[4].Listen = "[::ffff:127.0.0.1]:4739"
+	cases[5].Listen = "[fe80::1%eth0]:4739"
+	cases[6].Format = "suricata"
+	cases[7].Listen = "224.0.0.1:4739"
+	for _, c := range cases {
+		if _, e := sensorstate.Resolve([]sensorstate.Control{c}, base); e == nil {
+			t.Fatal("invalid binding accepted", c)
+		}
+	}
+	for _, c := range []sensorstate.Control{{ID: "fixed", Removed: true}, {ID: "missing", Removed: true}, {ID: "local", Removed: true, Enabled: true}, {ID: "missing", Allow: []string{"127.0.0.1/32"}}} {
+		if _, e := sensorstate.Resolve([]sensorstate.Control{c}, base); e == nil {
+			t.Fatal("invalid deletion/override", c)
+		}
+	}
+	allBase := []sensorstate.Definition{}
+	controls := []sensorstate.Control{}
+	for k := 0; k < 8; k++ {
+		id := fmt.Sprint("base", k)
+		allBase = append(allBase, sensorstate.Definition{ID: id, Format: "ipfix", Protocol: "udp", Listen: fmt.Sprintf("127.0.0.1:%d", 2050+k)})
+		controls = append(controls, sensorstate.Control{ID: id, Removed: true}, sensorstate.Control{ID: fmt.Sprint("remote", k), Format: "netflow9", Listen: fmt.Sprintf("127.0.0.1:%d", 3050+k), Enabled: true, Allow: []string{"127.0.0.1/32"}})
+	}
+	if defs, e := sensorstate.Resolve(controls, allBase); e != nil || len(defs) != 8 {
+		t.Fatal("bounded local tombstones", defs, e)
+	}
+	if _, e := sensorstate.Resolve([]sensorstate.Control{good}, allBase); e == nil {
+		t.Fatal("more than eight active inputs")
+	}
+	if _, e := sensorstate.Resolve(controls[:len(controls)-1], allBase); e != nil {
+		t.Fatal(e)
+	}
+}

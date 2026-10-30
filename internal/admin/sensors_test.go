@@ -157,10 +157,40 @@ func TestSensorAdminPolicyRBACHeartbeatAndRevisions(t *testing.T) {
 	if code, b, _ := request(root, "POST", "api/sensors", server.URL, command); code != 200 {
 		t.Fatal("reset", code, string(b))
 	}
+
+	// New listeners require an explicitly advertised capability; the legacy
+	// admission-only sensor must not receive unsupported management fields.
+	command.ExpectedRevision = 2
+	command.Inputs = []sensorstate.Control{{ID: "created", Format: "ipfix", Listen: "127.0.0.1:14739", Enabled: true, Allow: []string{"192.0.2.1/32"}}}
+	if code, _, _ := request(root, "POST", "api/sensors", server.URL, command); code != 400 {
+		t.Fatal("legacy sensor accepted dynamic listener", code)
+	}
+	h.Sensor.InputManagement = 1
+	h.Sensor.BaseInputs = sensorstate.Definitions(h.Sensor.Inputs)
+	if _, e = client.Heartbeat(ctx, h); e != nil {
+		t.Fatal(e)
+	}
+	if code, b, _ := request(root, "POST", "api/sensors", server.URL, command); code != 200 {
+		t.Fatal("create listener", code, string(b))
+	}
+	receipt, e = client.Heartbeat(ctx, h)
+	if e != nil || receipt.SensorPolicy.Inputs[0].Listen != "127.0.0.1:14739" {
+		t.Fatal("listener not delivered", receipt, e)
+	}
+	command.ExpectedRevision = 3
+	command.Inputs[0].Listen = "127.0.0.1:4739"
+	if code, _, _ := request(root, "POST", "api/sensors", server.URL, command); code != 400 {
+		t.Fatal("duplicate UDP endpoint accepted", code)
+	}
+	// Delete the central definition, suppress a local input, and retain the other.
+	command.Inputs = []sensorstate.Control{{ID: "ipfix", Removed: true}}
+	if code, b, _ := request(root, "POST", "api/sensors", server.URL, command); code != 200 {
+		t.Fatal("delete listener", code, string(b))
+	}
 	if e = s.AdminCommand(ctx, admin.Command{Action: "agent.revoke", AgentID: "sensor"}); e != nil {
 		t.Fatal(e)
 	}
-	command.ExpectedRevision = 2
+	command.ExpectedRevision = 4
 	if code, _, _ := request(root, "POST", "api/sensors", server.URL, command); code != 409 {
 		t.Fatal("revoked sensor write", code)
 	}
