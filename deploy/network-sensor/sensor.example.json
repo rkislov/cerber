@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "server": "https://siem.example.org",
+  "credentials": "/etc/cerber-sensor/credentials.json",
+  "spool": "/var/lib/cerber-sensor/queue.db",
+  "inputs": [
+    {"id": "devices", "format": "syslog", "protocol": "tcp", "listen": "127.0.0.1:5514", "allow": ["127.0.0.1/32"]},
+    {"id": "flows", "format": "netflow5", "protocol": "udp", "listen": "127.0.0.1:2055", "allow": ["127.0.0.1/32"]},
+    {"id": "eve", "format": "suricata", "protocol": "file", "path": "/var/log/suricata/eve.json"}
+  ]
+}

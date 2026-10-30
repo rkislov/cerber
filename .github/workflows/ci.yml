@@ -88,7 +88,9 @@ jobs:
       - name: Build without CGO
         env:
           CGO_ENABLED: '0'
-        run: go build -trimpath -o bin/${{ matrix.binary }} ./cmd/cerber
+        run: |
+          go build -trimpath -o bin/${{ matrix.binary }} ./cmd/cerber
+          go build -trimpath -o bin/${{ matrix.binary }}-sensor ./cmd/cerber-sensor
       - name: CLI smoke test
         run: ./bin/${{ matrix.binary }} -db smoke.db asset add -ip 127.0.0.1 -name smoke
       - name: systemd lifecycle and durable queue

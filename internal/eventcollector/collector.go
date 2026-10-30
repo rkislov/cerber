@@ -56,7 +56,7 @@ func run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 func (n Native) Read(ctx context.Context, cursor string) ([]telemetry.Raw, error) {
-	if n.Source == "network:cef" || !telemetry.ValidSource(n.Source) || len(cursor) > 2048 || strings.ContainsAny(cursor, "\x00\r\n") {
+	if telemetry.SensorSource(n.Source) || n.Source == "network:cef" || !telemetry.ValidSource(n.Source) || len(cursor) > 2048 || strings.ContainsAny(cursor, "\x00\r\n") {
 		return nil, telemetry.ErrInvalid
 	}
 	runner := n.Runner

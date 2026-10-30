@@ -128,6 +128,7 @@ func (r *ruleRuntime) evaluate(ctx context.Context, tx *sql.Tx, n telemetry.Norm
 		lastReason = fmt.Sprintf("Недостаточно подходящих событий или различных портов в окне: записей %d, порог %d", len(history), v.Config.Threshold)
 		d := correlation.Configured(id, n, history, v.Config.Threshold)
 		if d != nil {
+			d.ObserverOnly = telemetry.SensorSource(n.Source)
 			d.Policy = rulepolicy.Application(v, matched)
 			return d, "", truncated, nil
 		}
