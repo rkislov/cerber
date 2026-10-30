@@ -89,6 +89,12 @@ func Normalize(r RawRecord) Normalized {
 		n.EventTime = at.UTC()
 		n.Code = strconv.Itoa(v.EventID)
 		n.Message = v.Provider + " · " + n.Code
+		if r.Raw.Source == "windows:System" && (v.Provider == "Microsoft-Windows-Kernel-General" && (v.EventID == 12 || v.EventID == 13) || v.Provider == "EventLog" && (v.EventID == 6005 || v.EventID == 6006)) {
+			n.Class = "session"
+			n.Action = "host_session_boundary"
+			n.Parser = "windows-session/1"
+			n.Identity = &Identity{Computer: v.Computer}
+		}
 		if r.Raw.Source == "windows:System" && v.EventID == 7045 && v.Provider == "Service Control Manager" {
 			normalizeWindowsActivity(&n, v.Fields, v.Computer, v.EventID)
 		}
@@ -108,6 +114,17 @@ func Normalize(r RawRecord) Normalized {
 				n.SourceIP = v.Fields["IpAddress"]
 				n.Identity = windowsIdentity(v.Fields, v.Computer, "Target")
 				n.Parser = "windows-auth/3"
+			case 4634, 4647:
+				n.Class = "session"
+				n.Action = "session_ended"
+				n.Outcome = "success"
+				prefix := "Subject"
+				if v.EventID == 4634 {
+					prefix = "Target"
+				}
+				n.Identity = windowsIdentity(v.Fields, v.Computer, prefix)
+				n.User = v.Fields[prefix+"UserName"]
+				n.Parser = "windows-session/1"
 			case 4688, 4697, 4698:
 				normalizeWindowsActivity(&n, v.Fields, v.Computer, v.EventID)
 			case 4648, 4769:

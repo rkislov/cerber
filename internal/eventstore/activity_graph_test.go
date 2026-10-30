@@ -26,3 +26,25 @@ func TestActivityContextRequiresHostSIDAndSession(t *testing.T) {
 		t.Fatal(c, e)
 	}
 }
+
+func TestActivityStopsAtLogoffAndScope(t *testing.T) {
+	for _, blocked := range []bool{false, true} {
+		s := storageFixture(t)
+		at := time.Now().UTC().Add(-time.Minute)
+		fields := map[string]string{"SubjectUserName": "Alice", "SubjectDomainName": "LAB", "SubjectUserSid": chainSID, "SubjectLogonId": "0x123"}
+		if blocked {
+			chainEvent(t, s, "host", "asset", at.Add(time.Second), 4647, fields)
+		}
+		chainEvent(t, s, "host", "asset", at.Add(2*time.Second), 4688, fields)
+		c := telemetry.EventChain{Steps: []telemetry.ChainStep{{EventID: "anchor", AgentID: "host", AssetID: "asset", At: at, Action: "logon", Identity: telemetry.Identity{AccountKey: "windows-sid:" + chainSID, LocalSession: "0x123"}}}}
+		tx, e := s.db.BeginTx(context.Background(), nil)
+		if e != nil {
+			t.Fatal(e)
+		}
+		_, e = activityContext(context.Background(), tx, &c, func(telemetry.Normalized) (bool, error) { return blocked, nil })
+		tx.Rollback()
+		if e != nil || len(c.Steps) != 1 {
+			t.Fatal("logoff or exclusion bypassed", blocked, c, e)
+		}
+	}
+}
