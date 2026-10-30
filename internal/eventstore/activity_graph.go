@@ -11,7 +11,7 @@ import (
 
 // Activity context is read at graph-open time; it never rewrites detections.
 // Only a bounded same-host SID + local-session association is permitted.
-func activityContext(ctx context.Context, tx *sql.Tx, c *telemetry.EventChain) (bool, error) {
+func activityContext(ctx context.Context, tx *sql.Tx, c *telemetry.EventChain, allow ...func(telemetry.Normalized) (bool, error)) (bool, error) {
 	anchors := append([]telemetry.ChainStep{}, c.Steps...)
 	seen := map[string]bool{}
 	for _, v := range anchors {
@@ -56,21 +56,46 @@ func activityContext(ctx context.Context, tx *sql.Tx, c *telemetry.EventChain) (
 			if seen[n.ID] || n.Identity == nil || n.AssetID != a.AssetID || n.Identity.AccountKey != a.Identity.AccountKey || !n.EventTime.After(a.At) {
 				continue
 			}
+			if len(allow) > 0 {
+				ok, err := allow[0](n)
+				if err != nil {
+					return false, err
+				}
+				if !ok {
+					continue
+				}
+			}
+			closed, err := sessionBoundary(ctx, tx, a, n.EventTime)
+			if err != nil {
+				return false, err
+			}
+			if closed {
+				continue
+			}
 			seen[n.ID] = true
 			c.Steps = append(c.Steps, telemetry.ChainStep{EventID: n.ID, AgentID: n.AgentID, AssetID: n.AssetID, At: n.EventTime, User: n.User, Action: n.Action, Code: n.Code, Outcome: n.Outcome, Identity: *n.Identity, WindowsActivity: n.WindowsActivity})
-			c.Links = append(c.Links, telemetry.ChainLink{From: a.EventID, To: n.ID, Kind: "session_activity", Basis: "Контекст при открытии графа: тот же агент/актив, SID инициатора и локальный LogonId; после входа, не более 30 минут. Локальный ID может повторяться после перезагрузки. Это не самостоятельное доказательство атаки."})
+			c.Links = append(c.Links, telemetry.ChainLink{From: a.EventID, To: n.ID, Kind: "session_activity", Basis: "Контекст при открытии графа: тот же агент/актив, SID инициатора и локальный LogonId; после входа, не более 30 минут. Проверены доступные границы завершения сеанса, повторного входа и перезапуска. Отсутствующие события границ остаются ограничением. Это не самостоятельное доказательство атаки."})
 		}
 	}
 	return false, nil
 }
 
-func serviceConfirmations(ctx context.Context, tx *sql.Tx, c *telemetry.EventChain) error {
+func serviceConfirmations(ctx context.Context, tx *sql.Tx, c *telemetry.EventChain, allow ...func(telemetry.Normalized) (bool, error)) error {
 	steps := append([]telemetry.ChainStep{}, c.Steps...)
 	seen := map[string]bool{}
 	for _, v := range steps {
 		seen[v.EventID] = true
 	}
 	for _, a := range steps {
+		if len(allow) > 0 {
+			ok, e := allow[0](telemetry.Normalized{AgentID: a.AgentID, User: a.User, SourceIP: a.SourceIP})
+			if e != nil {
+				return e
+			}
+			if !ok {
+				continue
+			}
+		}
 		w := a.WindowsActivity
 		if a.Code != "4697" || w == nil || w.Name == "" || w.Image == "" {
 			continue
@@ -107,10 +132,25 @@ func serviceConfirmations(ctx context.Context, tx *sql.Tx, c *telemetry.EventCha
 			if seen[n.ID] || n.Code != "7045" || n.AssetID != a.AssetID || v == nil || v.Name != w.Name || v.Image != w.Image {
 				continue
 			}
+			if len(allow) > 0 {
+				ok, err := allow[0](n)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					continue
+				}
+			}
 			seen[n.ID] = true
 			c.Steps = append(c.Steps, telemetry.ChainStep{EventID: n.ID, AgentID: n.AgentID, AssetID: n.AssetID, At: n.EventTime, Code: n.Code, Action: n.Action, Outcome: n.Outcome, Identity: *n.Identity, WindowsActivity: v})
 			c.Links = append(c.Links, telemetry.ChainLink{From: a.EventID, To: n.ID, Kind: "service_confirmation", Basis: "Сопоставление записей установки: тот же узел, точные имя и путь службы, расхождение до 5 секунд. У 7045 нет подтверждённого инициатора или сеанса; эта связь не доказывает личность установившего службу."})
 		}
 	}
 	return nil
+}
+
+func sessionBoundary(ctx context.Context, tx *sql.Tx, a telemetry.ChainStep, until time.Time) (bool, error) {
+	var found int
+	e := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM normalized_events WHERE agent_id=? AND json_extract(payload,'$.asset_id')=? AND status='parsed' AND event_time>=? AND event_time<=? AND id<>? AND (json_extract(payload,'$.action')='host_session_boundary' OR (json_extract(payload,'$.identity.local_session')=? AND (json_extract(payload,'$.action')='session_ended' OR (class='authentication' AND outcome='success' AND json_extract(payload,'$.action')='logon')))))`, a.AgentID, a.AssetID, stamp(a.At), stamp(until), a.EventID, a.Identity.LocalSession).Scan(&found)
+	return found != 0, e
 }

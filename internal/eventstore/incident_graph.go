@@ -8,6 +8,7 @@ import (
 	"errors"
 	"github.com/rkislov/cerber/internal/correlation"
 	"github.com/rkislov/cerber/internal/incidents"
+	"github.com/rkislov/cerber/internal/rulepolicy"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"time"
 )
@@ -61,20 +62,53 @@ func (s *Store) IncidentGraph(ctx context.Context, id string) (correlation.Inves
 		return out, e
 	}
 	rows.Close()
+	policies, err := loadRulePolicies(ctx, tx)
+	if err != nil {
+		return out, err
+	}
+	runtime := ruleRuntime{store: s, policies: policies, members: map[string][]string{}}
 	for i := range out.Anchors {
 		c := out.Anchors[i].Chain
 		if c == nil {
 			continue
 		}
-		truncated, err := activityContext(ctx, tx, c)
+		rule := out.Anchors[i].Rule
+		version, ok := policies[rule]
+		if !ok || !version.Config.Enabled {
+			continue
+		}
+		allow := func(n telemetry.Normalized) (bool, error) {
+			groups, e := runtime.groups(ctx, rule, n)
+			if e != nil {
+				return false, e
+			}
+			_, reason := rulepolicy.ScopeEvent(version.Config, n.AgentID, n.User, n.SourceIP, n.DestinationIP, groups)
+			return reason == "", nil
+		}
+		// Anchor scope also matters: activity often lacks the original source IP/user.
+		kept := []telemetry.ChainStep{}
+		for _, a := range c.Steps {
+			ok, e := allow(telemetry.Normalized{AgentID: a.AgentID, User: a.User, SourceIP: a.SourceIP})
+			if e != nil {
+				return out, e
+			}
+			if ok {
+				kept = append(kept, a)
+			}
+		}
+		original := c.Steps
+		c.Steps = kept
+		truncated, err := activityContext(ctx, tx, c, allow)
+		added := append([]telemetry.ChainStep{}, c.Steps[len(kept):]...)
+		c.Steps = append(original, added...)
 		if err != nil {
 			return out, err
 		}
-		if err = serviceConfirmations(ctx, tx, c); err != nil {
+		if err = serviceConfirmations(ctx, tx, c, allow); err != nil {
 			return out, err
 		}
 		out.Truncated = out.Truncated || truncated || c.Truncated
-		c.Limitations += " Контекст процессов/служб/заданий добавлен на момент открытия графа из оперативного журнала; до 20 шагов, окно 30 минут. 7045 не содержит SID/сеанса инициатора и автоматически к пользователю не привязывается."
+		c.Limitations += " Контекст проверен по текущей версии правила, группам и исключениям. Контекст процессов/служб/заданий добавлен на момент открытия графа из оперативного журнала; до 20 шагов, окно 30 минут. 7045 не содержит SID/сеанса инициатора и автоматически к пользователю не привязывается."
 	}
 	return out, tx.Commit()
 }
