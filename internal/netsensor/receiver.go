@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,7 @@ import (
 	"github.com/rkislov/cerber/internal/agent"
 	"github.com/rkislov/cerber/internal/eventcollector"
 	"github.com/rkislov/cerber/internal/eventstore"
+	"github.com/rkislov/cerber/internal/flowexport"
 	"github.com/rkislov/cerber/internal/ingest"
 	"github.com/rkislov/cerber/internal/telemetry"
 )
@@ -33,11 +35,13 @@ import (
 const maxMessage = 12000
 
 type Receiver struct {
-	spool                      eventcollector.Spool
-	agent                      string
-	mu                         sync.Mutex
-	received, rejected, stored atomic.Uint64
-	states                     map[string]telemetry.SourceHealth
+	flows                                                              flowexport.Decoder
+	flowTemplates, flowUnknown, flowWithdrawals, flowResets, flowStale atomic.Uint64
+	spool                                                              eventcollector.Spool
+	agent                                                              string
+	mu                                                                 sync.Mutex
+	received, rejected, stored                                         atomic.Uint64
+	states                                                             map[string]telemetry.SourceHealth
 }
 
 func newReceiver(spool eventcollector.Spool, agent string) *Receiver {
@@ -47,12 +51,47 @@ func newReceiver(spool eventcollector.Spool, agent string) *Receiver {
 // accept commits before reading the next message on a stream. TCP itself has no
 // durable application acknowledgement. UDP is best effort; rejected datagrams
 // (including a full spool) are counted, never represented as delivered events.
-func (r *Receiver) accept(ctx context.Context, i Input, peer string, data []byte) error {
+func (r *Receiver) accept(ctx context.Context, i Input, peer string, data []byte, ports ...uint16) error {
 	r.received.Add(1)
 	fail := func(e error) error { r.rejected.Add(1); return e }
 	v := telemetry.SensorEnvelope{Input: i.ID, Peer: peer, Transport: i.Protocol, Profile: i.Format}
 	count := 1
-	if i.Format == "netflow5" {
+	var decoded flowexport.Result
+	if i.Format == "netflow9" || i.Format == "ipfix" {
+		if len(ports) != 1 || ports[0] == 0 {
+			return fail(telemetry.ErrInvalid)
+		}
+		ip, e := netip.ParseAddr(peer)
+		if e != nil {
+			return fail(e)
+		}
+		expected := uint16(9)
+		if i.Format == "ipfix" {
+			expected = 10
+		}
+		if len(data) < 2 || binary.BigEndian.Uint16(data) != expected {
+			return fail(telemetry.ErrInvalid)
+		}
+		ttl := flowexport.DefaultTTL
+		if i.TemplateTTLSeconds != 0 {
+			ttl = time.Duration(i.TemplateTTLSeconds) * time.Second
+		}
+		decoded, e = r.flows.Decode(i.ID, netip.AddrPortFrom(ip, ports[0]), data, time.Now().UTC(), ttl)
+		if e != nil {
+			if errors.Is(e, flowexport.ErrStale) {
+				r.flowStale.Add(1)
+			}
+			return fail(e)
+		}
+		r.flowTemplates.Add(uint64(decoded.Templates))
+		r.flowUnknown.Add(uint64(decoded.UnknownSets))
+		r.flowWithdrawals.Add(uint64(decoded.IgnoredWithdrawals))
+		if decoded.Reset {
+			r.flowResets.Add(1)
+		}
+		v.PeerPort = ports[0]
+		count = len(decoded.Records)
+	} else if i.Format == "netflow5" {
 		flows, e := telemetry.DecodeNetFlow5(data)
 		if e != nil {
 			return fail(e)
@@ -76,6 +115,9 @@ func (r *Receiver) accept(ctx context.Context, i Input, peer string, data []byte
 	now := time.Now().UTC()
 	for k := 0; k < count; k++ {
 		v.Record = k
+		if i.Format == "netflow9" || i.Format == "ipfix" {
+			v.Flow = &decoded.Records[k]
+		}
 		p, e := json.Marshal(v)
 		if e != nil {
 			return fail(e)
@@ -83,11 +125,22 @@ func (r *Receiver) accept(ctx context.Context, i Input, peer string, data []byte
 		cursor := b.ID + ":" + strconv.Itoa(k)
 		b.Records = append(b.Records, telemetry.Raw{ID: telemetry.ID(b.ID, cursor), Source: i.Source(), Cursor: cursor, ObservedAt: now, Data: p})
 	}
-	if e := b.Validate(); e != nil {
-		return fail(e)
+	if count > 0 {
+		if e := b.Validate(); e != nil {
+			return fail(e)
+		}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if count == 0 {
+		state := telemetry.SourceHealth{Source: i.Source(), State: "ok", LastReadAt: &now}
+		if decoded.UnknownSets > 0 {
+			state.State = "error"
+			state.Code = "source_read_failed"
+		}
+		r.states[i.Source()] = state
+		return nil
+	}
 	previous, e := r.spool.SourceCursor(ctx, r.agent, i.Source())
 	if e == nil {
 		e = r.spool.Enqueue(ctx, b, i.Source(), previous, b.Records[len(b.Records)-1].Cursor)
@@ -102,6 +155,10 @@ func (r *Receiver) accept(ctx context.Context, i Input, peer string, data []byte
 		}
 		r.states[i.Source()] = state
 		return fail(e)
+	}
+	if decoded.UnknownSets > 0 {
+		state.State = "error"
+		state.Code = "source_read_failed"
 	}
 	r.states[i.Source()] = state
 	r.stored.Add(uint64(count))
@@ -235,7 +292,7 @@ func (r *Receiver) serveUDP(ctx context.Context, c *net.UDPConn, i Input) error 
 			r.rejected.Add(1)
 			continue
 		}
-		_ = r.accept(ctx, i, peer.Addr().Unmap().String(), buf[:n])
+		_ = r.accept(ctx, i, peer.Addr().Unmap().String(), buf[:n], peer.Port())
 	}
 }
 
@@ -361,6 +418,7 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 				fmt.Fprintf(log, "sensor heartbeat: %v\n", e)
 			}
 			fmt.Fprintf(log, "sensor counters received=%d stored_records=%d rejected=%d queue_batches=%d queue_bytes=%d delivery=%s\n", r.received.Load(), r.stored.Load(), r.rejected.Load(), h.QueueBatches, h.QueueBytes, h.Delivery)
+			fmt.Fprintf(log, "flow templates=%d unknown_sets=%d ignored_udp_withdrawals=%d resets=%d stale_packets=%d\n", r.flowTemplates.Load(), r.flowUnknown.Load(), r.flowWithdrawals.Load(), r.flowResets.Load(), r.flowStale.Load())
 			nextHeartbeat = time.Now().Add(time.Minute)
 		}
 		done()

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/rkislov/cerber/internal/flowexport"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -15,36 +16,43 @@ import (
 // from addresses claimed inside that message. The enrolled sensor is the observer,
 // never automatically the owner of either endpoint.
 type SensorEnvelope struct {
-	Input     string `json:"input"`
-	Peer      string `json:"peer"`
-	Transport string `json:"transport"`
-	Profile   string `json:"profile"`
-	Line      string `json:"line,omitempty"`
-	Packet    []byte `json:"packet,omitempty"`
-	Record    int    `json:"record,omitempty"`
+	Flow      *flowexport.Evidence `json:"flow,omitempty"`
+	PeerPort  uint16               `json:"peer_port,omitempty"`
+	Input     string               `json:"input"`
+	Peer      string               `json:"peer"`
+	Transport string               `json:"transport"`
+	Profile   string               `json:"profile"`
+	Line      string               `json:"line,omitempty"`
+	Packet    []byte               `json:"packet,omitempty"`
+	Record    int                  `json:"record,omitempty"`
 }
 
 type NetworkObservation struct {
-	Kind             string     `json:"kind"`
-	Input            string     `json:"input"`
-	Exporter         string     `json:"exporter"`
-	Transport        string     `json:"transport"`
-	ReportedHost     string     `json:"reported_host,omitempty"`
-	Application      string     `json:"application,omitempty"`
-	Protocol         int        `json:"protocol,omitempty"`
-	SourcePort       int        `json:"source_port,omitempty"`
-	FlowID           string     `json:"flow_id,omitempty"`
-	Start            *time.Time `json:"start,omitempty"`
-	End              *time.Time `json:"end,omitempty"`
-	Packets          uint64     `json:"packets,omitempty"`
-	Bytes            uint64     `json:"bytes,omitempty"`
-	InputInterface   int        `json:"input_interface,omitempty"`
-	OutputInterface  int        `json:"output_interface,omitempty"`
-	SamplingMode     int        `json:"sampling_mode,omitempty"`
-	SamplingInterval int        `json:"sampling_interval,omitempty"`
-	Signature        string     `json:"signature,omitempty"`
-	Severity         int        `json:"severity,omitempty"`
-	TimeBasis        string     `json:"time_basis"`
+	ExporterPort      uint16     `json:"exporter_port,omitempty"`
+	ObservationDomain uint32     `json:"observation_domain,omitempty"`
+	TemplateID        uint16     `json:"template_id,omitempty"`
+	TemplateHash      string     `json:"template_hash,omitempty"`
+	ExportSequence    uint32     `json:"export_sequence,omitempty"`
+	Kind              string     `json:"kind"`
+	Input             string     `json:"input"`
+	Exporter          string     `json:"exporter"`
+	Transport         string     `json:"transport"`
+	ReportedHost      string     `json:"reported_host,omitempty"`
+	Application       string     `json:"application,omitempty"`
+	Protocol          int        `json:"protocol,omitempty"`
+	SourcePort        int        `json:"source_port,omitempty"`
+	FlowID            string     `json:"flow_id,omitempty"`
+	Start             *time.Time `json:"start,omitempty"`
+	End               *time.Time `json:"end,omitempty"`
+	Packets           uint64     `json:"packets,omitempty"`
+	Bytes             uint64     `json:"bytes,omitempty"`
+	InputInterface    int        `json:"input_interface,omitempty"`
+	OutputInterface   int        `json:"output_interface,omitempty"`
+	SamplingMode      int        `json:"sampling_mode,omitempty"`
+	SamplingInterval  int        `json:"sampling_interval,omitempty"`
+	Signature         string     `json:"signature,omitempty"`
+	Severity          int        `json:"severity,omitempty"`
+	TimeBasis         string     `json:"time_basis"`
 }
 
 func SensorSource(s string) bool {
@@ -85,7 +93,52 @@ func normalizeSensor(r RawRecord, n Normalized) Normalized {
 	}
 	n.Network = &NetworkObservation{Kind: v.Profile, Input: v.Input, Exporter: v.Peer, Transport: v.Transport, TimeBasis: "sensor_receive_time"}
 	n.Device = v.Peer
-	if r.Raw.Source == "network:netflow" {
+	if r.Raw.Source == "network:netflow" && (v.Profile == "netflow9" || v.Profile == "ipfix") {
+		if v.Transport != "udp" || v.PeerPort == 0 || v.Flow == nil {
+			return bad()
+		}
+		f, e := flowexport.DecodeEvidence(*v.Flow)
+		if e != nil || v.Profile == "netflow9" && f.Header.Version != 9 || v.Profile == "ipfix" && f.Header.Version != 10 {
+			return bad()
+		}
+		if f.Header.Exported.After(r.ReceivedAt.Add(5 * time.Minute)) {
+			return bad()
+		}
+		o := n.Network
+		o.ExporterPort = v.PeerPort
+		o.ObservationDomain = f.Header.Domain
+		o.TemplateID = f.TemplateID
+		o.TemplateHash = f.TemplateHash
+		o.ExportSequence = f.Header.Sequence
+		n.SourceIP = f.Source
+		n.DestinationIP = f.Destination
+		n.DestinationPort = f.DestinationPort
+		o.Protocol = f.Protocol
+		o.SourcePort = f.SourcePort
+		o.Start = f.Start
+		o.End = f.End
+		o.Packets = f.Packets
+		o.Bytes = f.Bytes
+		o.FlowID = f.ID
+		o.InputInterface = f.Input
+		o.OutputInterface = f.Output
+		o.SamplingMode = f.SamplingMode
+		o.SamplingInterval = f.SamplingInterval
+		o.TimeBasis = f.TimeBasis
+		n.EventTime = f.Header.Exported
+		if f.End != nil {
+			n.EventTime = *f.End
+		}
+		n.Product = map[string]string{"netflow9": "NetFlow v9", "ipfix": "IPFIX"}[v.Profile]
+		n.Message = "Exported flow metadata; template snapshot retained"
+		if !f.Options && f.Source != "" && f.Destination != "" {
+			n.Class = "network_flow"
+			n.Action = "flow_observed"
+		} else {
+			n.Action = "flow_metadata"
+			n.Message = "Export metadata / options (not an endpoint connection)"
+		}
+	} else if r.Raw.Source == "network:netflow" {
 		if v.Profile != "netflow5" || v.Transport != "udp" {
 			return bad()
 		}
