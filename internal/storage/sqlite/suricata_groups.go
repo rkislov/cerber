@@ -63,8 +63,25 @@ func reconcileSuricataGroup(ctx context.Context, tx *sql.Tx, id string, h ingest
 	if p.State != "ready" || p.ActiveID == "" {
 		return nil
 	}
-	if old.Bundle.ID == p.ActiveID && old.GroupID == p.GroupID {
-		return nil
+	if old.Bundle.ID == p.ActiveID {
+		if old.GroupID == p.GroupID {
+			// A failed attempt is retried only after an explicit policy revision,
+			// never on every heartbeat. An unresolved rollback still needs local recovery.
+			if status.State != "error" || status.Revision != old.Revision || p.Revision <= old.GroupRevision {
+				return nil
+			}
+		} else if status.State == "applied" && status.Revision == old.Revision && status.AppliedID == p.ActiveID {
+			// Taking ownership of the already confirmed rules does not require
+			// another engine reload (which temporarily needs a second ruleset in RAM).
+			old.GroupID = p.GroupID
+			old.GroupRevision = p.Revision
+			data, err := json.Marshal(old)
+			if err != nil {
+				return err
+			}
+			_, err = tx.ExecContext(ctx, "UPDATE suricata_assignments SET payload=? WHERE agent_id=?", string(data), id)
+			return err
+		}
 	}
 	_, e = assignSuricata(ctx, tx, rules.Change{AgentID: id, ExpectedRevision: old.Revision, BundleID: p.ActiveID}, "system:suricata-group", p.GroupID, p.Revision)
 	return e
