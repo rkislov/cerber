@@ -9,6 +9,7 @@ import (
 	"github.com/rkislov/cerber/internal/integrations"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -166,6 +167,15 @@ func (s *Store) HealthNotificationBatch(ctx context.Context, after int64) ([]int
 		var n integrations.Notification
 		if e = rows.Scan(&n.Sequence, &n.ID, &n.Subject, &n.Body); e != nil {
 			return nil, e
+		}
+		// The suffix is written by SamplePipelineHealth, not supplied by an event.
+		_, suffix, ok := strings.Cut(n.ID, ":")
+		if ok {
+			n.Details = integrations.MailDetails{Title: strings.TrimPrefix(n.Subject, "Предупреждение SIEM: "), Kind: "health", Severity: suffix, Summary: n.Body}
+			if suffix == "resolved" {
+				n.Details.Kind = "recovery"
+				n.Details.Title = strings.TrimPrefix(n.Subject, "Восстановление SIEM: ")
+			}
 		}
 		out = append(out, n)
 	}

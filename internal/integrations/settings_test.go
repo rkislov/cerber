@@ -20,6 +20,29 @@ import (
 	"time"
 )
 
+func TestSMTPConsoleURLValidationAndPersistence(t *testing.T) {
+	for _, value := range []string{"javascript:alert(1)", "http://siem.example/admin/", "//siem.example/admin/", "https://u:secret@siem.example/", "https://siem.example/?token=secret", "https://siem.example/#fragment", "https://siem.example/\r\nBcc:bad", "https:///admin/", "https://siem.example:bad/"} {
+		if validConsoleURL(value) {
+			t.Fatalf("unsafe console URL accepted: %q", value)
+		}
+		if _, _, err := renderMail("test", "test", value, MailDetails{}); err == nil {
+			t.Fatal("renderer accepted unsafe console URL")
+		}
+	}
+	s := testStore(t)
+	m := s.View().SMTP
+	m.ConsoleURL = "https://siem.example:8443/admin/"
+	if err := s.Save(Command{Version: s.View().Version, Scope: "smtp", SMTP: m}, "roman"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save(Command{Version: s.View().Version, Scope: "threatfox"}, "roman"); err != nil {
+		t.Fatal(err)
+	}
+	if s.View().SMTP.ConsoleURL != m.ConsoleURL {
+		t.Fatal("other settings save changed console URL")
+	}
+}
+
 func TestEncryptedSecretsPreservationAndConflict(t *testing.T) {
 	d := t.TempDir()
 	key := filepath.Join(d, "key")

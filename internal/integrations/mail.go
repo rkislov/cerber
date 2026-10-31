@@ -5,21 +5,23 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net"
 	"net/smtp"
 	"strconv"
-	"strings"
 	"time"
 )
 
 func feedID(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
-func sendSMTP(ctx context.Context, m SMTP, id, subject, body string) error {
-	return sendSMTPWithTLS(ctx, m, id, subject, body, &tls.Config{ServerName: m.Host, MinVersion: tls.VersionTLS12})
+func sendSMTP(ctx context.Context, m SMTP, id, subject, body string, details MailDetails) error {
+	return sendSMTPWithTLS(ctx, m, id, subject, body, details, &tls.Config{ServerName: m.Host, MinVersion: tls.VersionTLS12})
 }
-func sendSMTPWithTLS(ctx context.Context, m SMTP, id, subject, body string, cfg *tls.Config) error {
+func sendSMTPWithTLS(ctx context.Context, m SMTP, id, subject, body string, details MailDetails, cfg *tls.Config) error {
+	message, e := composeMail(m, id, subject, body, details, time.Now())
+	if e != nil {
+		return fmt.Errorf("SMTP message rendering failed")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	conn, e := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(m.Host, strconv.Itoa(m.Port)))
@@ -65,15 +67,7 @@ func sendSMTPWithTLS(ctx context.Context, m SMTP, id, subject, body string, cfg 
 	if e != nil {
 		return fmt.Errorf("SMTP DATA rejected")
 	}
-	subject = "=?UTF-8?B?" + base64.StdEncoding.EncodeToString([]byte(subject)) + "?="
-	message := "From: " + m.From + "\r\nTo: " + strings.Join(m.To, ", ") + "\r\nDate: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\nMessage-ID: <" + feedID([]byte(id)) + "@cerber.local>\r\nSubject: " + subject + "\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n"
-	encoded := base64.StdEncoding.EncodeToString([]byte(body + "\n\nОткройте консоль SIEM для расследования.\n"))
-	for len(encoded) > 76 {
-		message += encoded[:76] + "\r\n"
-		encoded = encoded[76:]
-	}
-	message += encoded + "\r\n"
-	if _, e = data.Write([]byte(message)); e != nil {
+	if _, e = data.Write(message); e != nil {
 		return fmt.Errorf("SMTP message write failed")
 	}
 	if e = data.Close(); e != nil {

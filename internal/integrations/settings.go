@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/mail"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,14 +25,15 @@ var ErrInvalid = errors.New("invalid integration settings")
 var ErrConflict = errors.New("settings changed; reload current version")
 
 type SMTP struct {
-	Enabled  bool     `json:"enabled"`
-	Host     string   `json:"host"`
-	Port     int      `json:"port"`
-	Security string   `json:"security"`
-	Username string   `json:"username"`
-	Password string   `json:"password,omitempty"`
-	From     string   `json:"from"`
-	To       []string `json:"to"`
+	Enabled    bool     `json:"enabled"`
+	Host       string   `json:"host"`
+	Port       int      `json:"port"`
+	Security   string   `json:"security"`
+	Username   string   `json:"username"`
+	Password   string   `json:"password,omitempty"`
+	From       string   `json:"from"`
+	To         []string `json:"to"`
+	ConsoleURL string   `json:"console_url,omitempty"`
 }
 type Change struct {
 	At      time.Time `json:"at"`
@@ -151,6 +153,9 @@ func validate(c configuration) error {
 		return ErrInvalid
 	}
 	m := c.SMTP
+	if !validConsoleURL(m.ConsoleURL) {
+		return ErrInvalid
+	}
 	if len(m.Host) > 253 || strings.ContainsAny(m.Host, "\x00\r\n /\\:@") || len(m.Username) > 320 || len(m.Password) > 4096 || strings.ContainsAny(m.Username+m.Password, "\x00\r\n") || len(m.To) > 20 {
 		return ErrInvalid
 	}
@@ -204,6 +209,17 @@ func validate(c configuration) error {
 		}
 	}
 	return nil
+}
+
+// The console link is administrator supplied, never taken from event content.
+func validConsoleURL(value string) bool {
+	if value == "" {
+		return true
+	}
+	u, err := url.Parse(value)
+	return err == nil && len(value) <= 2048 && !strings.ContainsAny(value, "\x00\r\n\t ") &&
+		u.Scheme == "https" && u.Hostname() != "" && u.User == nil && u.RawQuery == "" &&
+		!u.ForceQuery && u.Fragment == "" && u.Opaque == ""
 }
 func (s *Store) Save(c Command, actor string) error {
 	s.mu.Lock()

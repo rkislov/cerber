@@ -47,4 +47,7 @@ func TestIOCCorrelationReplayAndRestart(t *testing.T) {
 	if e != nil || len(mail) != 1 {
 		t.Fatal(mail, e)
 	}
+	if mail[0].Details.Title != d[0].Title || mail[0].Details.Severity != d[0].Severity || mail[0].Details.Kind != "detection" || mail[0].Details.OccurredAt.IsZero() || mail[0].Details.Fields[4].Value != d[0].ID {
+		t.Fatal("notification lost detection context", mail[0].Details)
+	}
 }
