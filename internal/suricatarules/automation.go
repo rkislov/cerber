@@ -33,25 +33,27 @@ type FeedChange struct {
 	RunNow           bool      `json:"run_now"`
 }
 type GroupPolicy struct {
-	GroupID     string    `json:"group_id"`
-	Revision    int64     `json:"revision"`
-	Enabled     bool      `json:"enabled"`
-	EngineMajor int       `json:"engine_major"`
-	Mode        string    `json:"mode"`
-	BundleID    string    `json:"bundle_id,omitempty"`
-	CustomID    string    `json:"custom_id,omitempty"`
-	ActiveID    string    `json:"active_id,omitempty"`
-	PreviousID  string    `json:"previous_id,omitempty"`
-	BuiltETID   string    `json:"built_et_id,omitempty"`
-	State       string    `json:"state"`
-	Error       string    `json:"error,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	UpdatedBy   string    `json:"updated_by"`
+	Rollout     *RolloutConfig `json:"rollout,omitempty"`
+	GroupID     string         `json:"group_id"`
+	Revision    int64          `json:"revision"`
+	Enabled     bool           `json:"enabled"`
+	EngineMajor int            `json:"engine_major"`
+	Mode        string         `json:"mode"`
+	BundleID    string         `json:"bundle_id,omitempty"`
+	CustomID    string         `json:"custom_id,omitempty"`
+	ActiveID    string         `json:"active_id,omitempty"`
+	PreviousID  string         `json:"previous_id,omitempty"`
+	BuiltETID   string         `json:"built_et_id,omitempty"`
+	State       string         `json:"state"`
+	Error       string         `json:"error,omitempty"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	UpdatedBy   string         `json:"updated_by"`
 }
 type GroupChange struct {
 	GroupPolicy
 	ExpectedRevision int64 `json:"expected_revision"`
 	Rollback         bool  `json:"rollback"`
+	RetryRollback    bool  `json:"retry_rollback"`
 }
 type GroupMember struct {
 	AgentID       string    `json:"agent_id"`
@@ -63,6 +65,7 @@ type GroupMember struct {
 	LastHeartbeat time.Time `json:"last_heartbeat"`
 }
 type GroupView struct {
+	Rollout  *Rollout      `json:"rollout,omitempty"`
 	Policy   GroupPolicy   `json:"policy"`
 	Name     string        `json:"name"`
 	Archived bool          `json:"archived"`
@@ -105,7 +108,7 @@ func Tick(ctx context.Context, s AutomationStore, download func(context.Context,
 	for _, g := range groups {
 		p := g.Policy
 		id := latest[p.EngineMajor]
-		if !p.Enabled || g.Archived || p.Mode != "et_open" || id == "" || p.BuiltETID == id {
+		if !p.Enabled || g.Archived || p.Mode != "et_open" || id == "" || p.BuiltETID == id || RolloutHolds(p.State) || p.State == "blocked" || p.State == "rolled_back" {
 			continue
 		}
 		b, err := s.SuricataBundle(ctx, id)

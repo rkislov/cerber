@@ -260,14 +260,38 @@ func (s *Store) SetSuricataGroup(ctx context.Context, c rules.GroupChange) (rule
 	if e != nil {
 		return out, rules.ErrNotFound
 	}
-	if g.Archived {
-		return out, rules.ErrConflict
-	}
 	old, e := readSuricataGroup(ctx, tx, c.GroupID)
 	if e != nil {
 		return out, e
 	}
 	if old.Revision != c.ExpectedRevision {
+		return out, rules.ErrConflict
+	}
+	r, e := readSuricataRollout(ctx, tx, c.GroupID)
+	if e != nil {
+		return out, e
+	}
+	if r != nil && rules.RolloutHolds(r.State) {
+		if !(c.Rollback && (r.State == "canary" || r.State == "fleet")) && !(c.RetryRollback && r.State == "rollback_failed") {
+			return out, rules.ErrConflict
+		}
+		old.Revision++
+		r.PolicyRevision = old.Revision
+		if e = beginSuricataRollback(ctx, tx, &old, r, "Остановка и откат по запросу администратора", u.Username, time.Now().UTC()); e != nil {
+			return out, e
+		}
+		if e = saveSuricataRollout(ctx, tx, r); e != nil {
+			return out, e
+		}
+		if e = saveSuricataGroup(ctx, tx, old); e != nil {
+			return out, e
+		}
+		return old, tx.Commit()
+	}
+	if c.RetryRollback {
+		return out, rules.ErrConflict
+	}
+	if g.Archived {
 		return out, rules.ErrConflict
 	}
 	if old.Revision == 0 {
@@ -297,7 +321,10 @@ func (s *Store) SetSuricataGroup(ctx context.Context, c rules.GroupChange) (rule
 	if (c.EngineMajor != 7 && c.EngineMajor != 8) || (c.Mode != "pinned" && c.Mode != "et_open") {
 		return out, rules.ErrInvalid
 	}
-	p := rules.GroupPolicy{GroupID: c.GroupID, Revision: old.Revision + 1, Enabled: c.Enabled, EngineMajor: c.EngineMajor, Mode: c.Mode, BundleID: c.BundleID, CustomID: c.CustomID, ActiveID: old.ActiveID, PreviousID: old.PreviousID, State: "waiting_feed", UpdatedBy: u.Username, UpdatedAt: time.Now().UTC()}
+	p := rules.GroupPolicy{Rollout: c.Rollout, GroupID: c.GroupID, Revision: old.Revision + 1, Enabled: c.Enabled, EngineMajor: c.EngineMajor, Mode: c.Mode, BundleID: c.BundleID, CustomID: c.CustomID, ActiveID: old.ActiveID, PreviousID: old.PreviousID, State: "waiting_feed", UpdatedBy: u.Username, UpdatedAt: time.Now().UTC()}
+	if e = validateRolloutConfig(ctx, tx, p); e != nil {
+		return out, e
+	}
 	if p.Mode == "pinned" {
 		b, e := suricataBundle(ctx, tx, p.BundleID)
 		if e != nil {
@@ -306,11 +333,16 @@ func (s *Store) SetSuricataGroup(ctx context.Context, c rules.GroupChange) (rule
 		if b.Manifest.EngineMajor != p.EngineMajor || p.CustomID != "" {
 			return out, rules.ErrInvalid
 		}
-		if p.ActiveID != p.BundleID {
+		if p.Rollout == nil && p.ActiveID != p.BundleID {
 			p.PreviousID = p.ActiveID
 			p.ActiveID = p.BundleID
 		}
 		p.State = "ready"
+		if p.Rollout != nil && p.Enabled {
+			if e = prepareSuricataRollout(ctx, tx, &p, p.BundleID, time.Now().UTC()); e != nil {
+				return out, e
+			}
+		}
 	} else {
 		if p.BundleID != "" {
 			return out, rules.ErrInvalid
@@ -364,24 +396,30 @@ func (s *Store) CompleteSuricataGroup(ctx context.Context, task rules.GroupPolic
 	if e != nil {
 		return e
 	}
-	if p.Revision != task.Revision || !p.Enabled || g.Archived || p.Mode != "et_open" || feed.LatestID != etID {
+	if p.Revision != task.Revision || !p.Enabled || g.Archived || p.Mode != "et_open" || feed.LatestID != etID || rules.RolloutHolds(p.State) || p.State == "blocked" || p.State == "rolled_back" {
 		return rules.ErrConflict
 	}
+	p.Revision++
 	if buildErr == nil {
+		p.Error = ""
 		var m rules.Manifest
 		m, buildErr = putSuricataBundle(ctx, tx, b, "system:suricata", true)
 		if buildErr == nil {
-			if p.ActiveID != m.ID {
+			if p.Rollout == nil && p.ActiveID != m.ID {
 				p.PreviousID = p.ActiveID
 				p.ActiveID = m.ID
 			}
 			p.State = "ready"
+			if p.Rollout != nil {
+				if e = prepareSuricataRollout(ctx, tx, &p, m.ID, time.Now().UTC()); e != nil {
+					return e
+				}
+			}
 		}
 	}
-	p.Revision++
 	p.BuiltETID = etID
-	p.Error = shortRuleError(buildErr)
 	if buildErr != nil {
+		p.Error = shortRuleError(buildErr)
 		p.State = "error"
 	}
 	p.UpdatedAt = time.Now().UTC()

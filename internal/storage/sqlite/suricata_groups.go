@@ -39,6 +39,10 @@ func reconcileSuricataGroup(ctx context.Context, tx *sql.Tx, id string, h ingest
 		return nil
 	}
 	status := h.Sensor.Rules
+	held, e := rolloutAgentHeld(ctx, tx, id)
+	if e != nil || held {
+		return e
+	}
 	groups, e := matchingSuricataGroups(ctx, tx, id, status.EngineMajor)
 	if e != nil {
 		return e
@@ -118,6 +122,10 @@ func (s *Store) SuricataGroups(ctx context.Context) ([]rules.GroupView, error) {
 	now := time.Now().UTC()
 	for i := range out {
 		v := &out[i]
+		v.Rollout, e = readSuricataRollout(ctx, tx, v.Policy.GroupID)
+		if e != nil {
+			return nil, e
+		}
 		v.Members = []rules.GroupMember{}
 		rows, e = tx.QueryContext(ctx, `SELECT a.id,s.name,a.revoked,coalesce(h.received_at,''),coalesce(h.payload,''),coalesce(r.payload,'') FROM agent_group_members m JOIN agents a ON a.id=m.agent_id JOIN assets s ON s.id=a.asset_id LEFT JOIN agent_heartbeats h ON h.agent_id=a.id LEFT JOIN suricata_assignments r ON r.agent_id=a.id WHERE m.group_id=? ORDER BY a.id LIMIT 500`, v.Policy.GroupID)
 		if e != nil {
@@ -181,6 +189,17 @@ func (s *Store) SuricataGroups(ctx context.Context) ([]rules.GroupView, error) {
 				m.v.State = "pending"
 			default:
 				m.v.State = st.State
+			}
+			if v.Rollout != nil && v.Policy.State != "ready" {
+				for _, rm := range v.Rollout.Members {
+					if rm.AgentID == m.v.AgentID {
+						m.v.State, m.v.Error = rm.State, rm.Error
+						m.v.DesiredID = v.Rollout.CandidateID
+						if rm.State == "unchanged" || rm.State == "rolled_back" || rm.State == "rollback_pending" || rm.State == "rollback_failed" {
+							m.v.DesiredID = rm.PreviousID
+						}
+					}
+				}
 			}
 			v.Members = append(v.Members, m.v)
 		}
