@@ -298,3 +298,53 @@ func TestSuricataAutomaticRetentionProtectsManualAndReferencedVersions(t *testin
 		t.Fatal(e)
 	}
 }
+
+func TestSuricataGroupOwnershipAndExplicitFailureRetry(t *testing.T) {
+	s, ctx, id, hash := ruleAutomationFixture(t)
+	g := makeGroup(t, s, id)
+	b := autoBundle(t, 901, "custom")
+	if _, e := s.PutSuricataBundle(ctx, b); e != nil {
+		t.Fatal(e)
+	}
+	rulesHeartbeat(t, s, id, hash, rules.Assignment{}, "idle")
+	a, e := s.AssignSuricata(ctx, rules.Change{AgentID: id, BundleID: b.Manifest.ID})
+	if e != nil {
+		t.Fatal(e)
+	}
+	rulesHeartbeat(t, s, id, hash, a, "applied")
+	change := rules.GroupChange{GroupPolicy: rules.GroupPolicy{GroupID: g.ID, Enabled: true, EngineMajor: 7, Mode: "pinned", BundleID: b.Manifest.ID}}
+	p, e := s.SetSuricataGroup(ctx, change)
+	if e != nil {
+		t.Fatal(e)
+	}
+	owned := rulesHeartbeat(t, s, id, hash, a, "applied")
+	if owned.Revision != a.Revision || owned.GroupID != g.ID || owned.GroupRevision != p.Revision {
+		t.Fatal("ownership reloaded existing rules", owned)
+	}
+	// Neither failed nor healthy steady-state heartbeats create new attempts.
+	if got := rulesHeartbeat(t, s, id, hash, owned, "error"); got.Revision != owned.Revision {
+		t.Fatal("unrequested retry", got)
+	}
+	change.ExpectedRevision = p.Revision
+	p, e = s.SetSuricataGroup(ctx, change)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if got := rulesHeartbeat(t, s, id, hash, owned, "rollback_failed"); got.Revision != owned.Revision {
+		t.Fatal("unresolved rollback retried", got)
+	}
+	retried := rulesHeartbeat(t, s, id, hash, owned, "error")
+	if retried.Revision != owned.Revision+1 || retried.GroupRevision != p.Revision {
+		t.Fatal("explicit retry missing", retried)
+	}
+	if got := rulesHeartbeat(t, s, id, hash, retried, "error"); got.Revision != retried.Revision {
+		t.Fatal("failed retry loop", got)
+	}
+	change.ExpectedRevision = p.Revision
+	if _, e = s.SetSuricataGroup(ctx, change); e != nil {
+		t.Fatal(e)
+	}
+	if got := rulesHeartbeat(t, s, id, hash, retried, "applied"); got.Revision != retried.Revision {
+		t.Fatal("healthy unchanged rules reloaded", got)
+	}
+}
