@@ -55,6 +55,14 @@ func receiveHeartbeat(w http.ResponseWriter, r *http.Request, store Receiver, id
 		}
 		return
 	}
+	// Group ownership is server-side metadata, not a new sensor wire protocol.
+	// Older clients deliberately reject unknown fields in heartbeat receipts.
+	if receipt.Suricata != nil {
+		a := *receipt.Suricata
+		a.GroupID = ""
+		a.GroupRevision = 0
+		receipt.Suricata = &a
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(receipt)
 }

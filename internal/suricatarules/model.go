@@ -47,11 +47,13 @@ type Bundle struct {
 	Data     []byte
 }
 type Assignment struct {
-	Revision   int64     `json:"revision"`
-	Bundle     Manifest  `json:"bundle"`
-	PreviousID string    `json:"previous_id,omitempty"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	UpdatedBy  string    `json:"updated_by"`
+	GroupID       string    `json:"group_id,omitempty"`
+	GroupRevision int64     `json:"group_revision,omitempty"`
+	Revision      int64     `json:"revision"`
+	Bundle        Manifest  `json:"bundle"`
+	PreviousID    string    `json:"previous_id,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	UpdatedBy     string    `json:"updated_by"`
 }
 type Change struct {
 	AgentID          string `json:"agent_id"`

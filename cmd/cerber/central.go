@@ -26,6 +26,7 @@ import (
 	"github.com/rkislov/cerber/internal/jobs"
 	"github.com/rkislov/cerber/internal/patch"
 	"github.com/rkislov/cerber/internal/storage/sqlite"
+	"github.com/rkislov/cerber/internal/suricatarules"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"io"
 	"net/http"
@@ -302,6 +303,12 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 			monitor.Run(monitorCtx, store, func(err error) { fmt.Fprintf(errOut, "alert monitor: %v\n", err) })
 			<-schedulerDone
 		}()
+		rulesDone := make(chan struct{})
+		go func() {
+			defer close(rulesDone)
+			suricatarules.RunAutomation(monitorCtx, store, func(e error) { fmt.Fprintf(errOut, "Suricata scheduler: %v\n", e) })
+		}()
+
 		responseDone := make(chan struct{})
 		go func() {
 			defer close(responseDone)
@@ -348,6 +355,7 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		}()
 		defer func() {
 			stop()
+			<-rulesDone
 			<-done
 			<-eventDone
 			<-integrationDone

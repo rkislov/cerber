@@ -150,6 +150,19 @@ func (s *Store) AcceptHeartbeat(ctx context.Context, id, hash string, h ingest.H
 	if _, err = tx.ExecContext(ctx, `INSERT INTO agent_heartbeats(agent_id,received_at,payload) VALUES(?,?,?) ON CONFLICT(agent_id) DO UPDATE SET received_at=excluded.received_at,payload=excluded.payload`, id, stamp(now), string(data)); err != nil {
 		return receipt, err
 	}
+	if err = reconcileSuricataGroup(ctx, tx, id, h); err != nil {
+		return receipt, err
+	}
+	if h.Sensor != nil && h.Sensor.Rules != nil {
+		a, e := suricataAssignment(ctx, tx, id)
+		if e != nil {
+			return receipt, e
+		}
+		if a.Revision > 0 {
+			receipt.Suricata = &a
+		}
+	}
+
 	if _, err = tx.ExecContext(ctx, `INSERT INTO agent_status(agent_id,last_seen_at) VALUES(?,?) ON CONFLICT(agent_id) DO UPDATE SET last_seen_at=MAX(agent_status.last_seen_at,excluded.last_seen_at)`, id, stamp(now)); err != nil {
 		return receipt, err
 	}

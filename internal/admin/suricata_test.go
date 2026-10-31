@@ -9,6 +9,7 @@ import (
 	"github.com/rkislov/cerber/internal/alerts"
 	"github.com/rkislov/cerber/internal/app"
 	"github.com/rkislov/cerber/internal/ingest"
+	"github.com/rkislov/cerber/internal/jobs"
 	"github.com/rkislov/cerber/internal/sensorstate"
 	"github.com/rkislov/cerber/internal/storage/sqlite"
 	rules "github.com/rkislov/cerber/internal/suricatarules"
@@ -91,6 +92,20 @@ func TestSuricataCatalogAssignmentRBACDeliveryAndRollback(t *testing.T) {
 	}
 	owner := login("owner")
 	viewer := login("viewer")
+	for _, body := range []any{map[string]any{"action": "feed", "feed": rules.FeedChange{EngineMajor: 7, Enabled: true, IntervalHours: 24, NextRunAt: time.Now().Add(time.Hour)}}, map[string]any{"action": "group", "group": rules.GroupChange{}}} {
+		if code, _ := call(viewer, "POST", "/admin/api/suricata-automation", body, true); code != 403 {
+			t.Fatal("automation viewer", code)
+		}
+		if code, _ := call(owner, "POST", "/admin/api/suricata-automation", body, false); code != 403 {
+			t.Fatal("automation CSRF", code)
+		}
+	}
+	if code, _ := call(owner, "POST", "/admin/api/suricata-automation", map[string]any{"action": "feed", "feed": rules.FeedChange{EngineMajor: 7, IntervalHours: 24, NextRunAt: time.Now().Add(time.Hour)}}, true); code != 200 {
+		t.Fatal("schedule", code)
+	}
+	if code, data := call(viewer, "GET", "/admin/suricata-automation.js", nil, false); code != 200 || !strings.Contains(string(data), "loadSuricataAutomation") {
+		t.Fatal("static asset", code)
+	}
 	upload := func(sid int) map[string]any {
 		return map[string]any{"action": "upload", "name": fmt.Sprint(sid), "engine_major": 7, "rules": fmt.Sprintf(`alert icmp any any -> any any (msg:"test"; sid:%d; rev:1;)`, sid)}
 	}
@@ -162,6 +177,36 @@ func TestSuricataCatalogAssignmentRBACDeliveryAndRollback(t *testing.T) {
 	p, _ := s.SuricataAssignment(ctx, creds.AgentID)
 	if p.Bundle.ID != a.ID || p.Revision != 3 {
 		t.Fatal(p)
+	}
+	acGroup := admin.WithPrincipal(ctx, admin.User{Username: "owner", Role: "administrator", Version: 1})
+	groupID, e := s.GroupCommand(acGroup, jobs.GroupCommand{Action: "create", Name: "IDS group"}, time.Now())
+	if e != nil {
+		t.Fatal(e)
+	}
+	_, e = s.GroupCommand(acGroup, jobs.GroupCommand{Action: "members.add", GroupID: groupID, GroupVersion: 1, AgentIDs: []string{creds.AgentID}}, time.Now())
+	if e != nil {
+		t.Fatal(e)
+	}
+	if code, _ := call(owner, "POST", "/admin/api/suricata-automation", map[string]any{"action": "group", "group": rules.GroupChange{GroupPolicy: rules.GroupPolicy{GroupID: groupID, Enabled: true, EngineMajor: 7, Mode: "pinned", BundleID: a.ID}}}, true); code != 200 {
+		t.Fatal("group API", code)
+	}
+	h.ObservedAt = time.Now().UTC()
+	h.Sensor.ObservedAt = h.ObservedAt
+	h.Sensor.Rules.UpdatedAt = h.ObservedAt
+	receipt, e = client.Heartbeat(ctx, h)
+	if e != nil || receipt.Suricata == nil || receipt.Suricata.GroupID != "" || receipt.Suricata.GroupRevision != 0 {
+		t.Fatal("wire must remain compatible", receipt, e)
+	}
+	serverAssignment, _ := s.SuricataAssignment(ctx, creds.AgentID)
+	if serverAssignment.GroupID != groupID {
+		t.Fatal("missing persisted owner", serverAssignment)
+	}
+	if code, _ := call(owner, "POST", "/admin/api/suricata", map[string]any{"action": "download", "engine_major": 7}, true); code != 202 {
+		t.Fatal("durable manual download", code)
+	}
+	feeds, e := s.SuricataFeeds(ctx)
+	if e != nil || !feeds[0].Requested {
+		t.Fatal(feeds, e)
 	}
 	// Revocation prevents package download even if the agent still knows the URL.
 	ac := admin.WithPrincipal(ctx, admin.User{Username: "owner", Role: "administrator", Version: 1})
