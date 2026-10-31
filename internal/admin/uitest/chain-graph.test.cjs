@@ -86,3 +86,10 @@ test('standalone Suricata incident shows both endpoints, signature and clickable
  const m=model([detection([o])]);assert.equal(m.accounts,0);assert.equal(m.sessions,0);const s=renderSetup();s.ctx.renderChainGraph(s.root,m);const nodes=s.all(s.root);for(const text of ['192.0.2.10:40000','192.0.2.20:445','Suricata SID 1000001'])assert.ok(nodes.some(n=>n.textContent===text));
  nodes.find(n=>n.tag==='button'&&n.textContent==='Исходный EVE / поток →').handlers.click();assert.deepEqual(s.opened,[o.event_id]);assert.ok(nodes.some(n=>n.textContent==='Сигнатура: CERBER test'));assert.ok(nodes.some(n=>n.textContent==='Flow ID: 18446744073709551610'));
 });
+
+// ICMP has no transport ports and alert records need not contain flow counters.
+test('ICMP evidence omits nonexistent ports and unknown traffic counters',()=>{
+ const ctx=vm.createContext({});vm.runInContext(source,ctx);const facts=ctx.chainWindowsFacts({source_ip:'192.0.2.10',destination_ip:'192.0.2.20',network:{kind:'suricata.alert',input:'eve',exporter:'local',protocol:1}});
+ assert.equal(facts.find(([k])=>k==='Источник')[1],'192.0.2.10');assert.equal(facts.find(([k])=>k==='Назначение')[1],'192.0.2.20');assert.ok(!facts.some(([k])=>k==='Пакеты / байты'));assert.ok(!facts.some(([,v])=>v.includes('undefined')));
+ assert.equal(ctx.networkEndpoint('2001:db8::1',443),'[2001:db8::1]:443');
+});
