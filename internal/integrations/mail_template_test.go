@@ -117,7 +117,7 @@ func TestMailVariantsAndPreview(t *testing.T) {
 			case "legacy":
 				d = MailDetails{}
 			}
-			plain, rich, err := renderMail("Предупреждение SIEM", "Серия неудачных входов\nID: "+strings.Repeat("abcdef01", 8), "https://siem.example.org/admin/", d)
+			plain, rich, err := renderMail("Срабатывание SIEM: auth.failed_burst", "Серия неудачных входов\nАгент: 7c4af20e63ba4181a2f774dc2389a1b0\nID срабатывания: "+strings.Repeat("abcdef01", 8), "https://siem.example.org/admin/", d)
 			if err != nil || !strings.Contains(plain, "Открыть SIEM") || strings.Contains(rich, "ZgotmplZ") {
 				t.Fatal("invalid template", err)
 			}
@@ -138,6 +138,22 @@ func TestMailVariantsAndPreview(t *testing.T) {
 	_, rich, err := renderMail("Сообщение", "Исходное сообщение", "", MailDetails{Severity: "not-a-severity"})
 	if err != nil || strings.Contains(rich, "href=") || strings.Contains(rich, "Критическая") || !strings.Contains(rich, "Исходное сообщение") {
 		t.Fatal("unconfigured link or severity was invented", err)
+	}
+}
+
+func TestLegacyMailRetainsTextWithoutInventingContext(t *testing.T) {
+	body := "Серия неудачных входов\nАгент: <script>not HTML</script>\nID срабатывания: " + strings.Repeat("f", 64) + "\nДополнительная строка: текст"
+	d := legacyMailDetails("Срабатывание SIEM: auth.failed_burst", body)
+	if d.Title != "Серия неудачных входов" || d.Severity != "" || !d.OccurredAt.IsZero() || len(d.Fields) != 3 || d.Summary != "Дополнительная строка: текст" {
+		t.Fatal("incorrect legacy conversion", d)
+	}
+	plain, rich, err := renderMail("Срабатывание SIEM: auth.failed_burst", body, "", MailDetails{})
+	if err != nil || !strings.Contains(plain, strings.Repeat("f", 64)) || !strings.Contains(plain, "<script>not HTML</script>") || strings.Contains(rich, "<script>") || strings.Contains(rich, "Высокая") {
+		t.Fatal("unsafe or lossy legacy rendering", err)
+	}
+	unknown := legacyMailDetails("Неизвестный формат", body)
+	if unknown.Summary != body || len(unknown.Fields) != 0 {
+		t.Fatal("unknown format changed")
 	}
 }
 

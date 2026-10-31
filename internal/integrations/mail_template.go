@@ -62,15 +62,48 @@ type mailView struct {
 	Fields                                                      []MailField
 }
 
+// Recognize only the text layouts emitted by older Cerber versions. This is
+// presentation-only: values remain escaped text, with no inferred severity,
+// timestamp or URL. Unrecognized lines are preserved in the summary.
+func legacyMailDetails(subject, body string) MailDetails {
+	d := MailDetails{Title: subject, Summary: body}
+	switch {
+	case strings.HasPrefix(subject, "Срабатывание SIEM: "):
+		title, rest, ok := strings.Cut(body, "\n")
+		if !ok || title == "" {
+			return d
+		}
+		d.Title, d.Kind, body = title, "detection", rest
+		d.Fields = []MailField{{Label: "Правило", Value: strings.TrimPrefix(subject, "Срабатывание SIEM: ")}}
+	case strings.HasPrefix(subject, "Предупреждение SIEM: "):
+		d.Title = strings.TrimPrefix(subject, "Предупреждение SIEM: ")
+	case strings.HasPrefix(subject, "Восстановление SIEM: "):
+		d.Title, d.Kind = strings.TrimPrefix(subject, "Восстановление SIEM: "), "recovery"
+	default:
+		return d
+	}
+	var remaining []string
+	for _, line := range strings.Split(body, "\n") {
+		label, value, ok := strings.Cut(line, ": ")
+		if ok && (label == "Агент" || label == "ID срабатывания" || label == "ID предупреждения" || label == "ID") {
+			d.Fields = append(d.Fields, MailField{Label: label, Value: value, Code: true})
+		} else {
+			remaining = append(remaining, line)
+		}
+	}
+	d.Summary = strings.Join(remaining, "\n")
+	return d
+}
+
 func renderMail(subject, body, consoleURL string, details MailDetails) (string, string, error) {
 	if !validConsoleURL(consoleURL) {
 		return "", "", ErrInvalid
 	}
+	if details.Title == "" {
+		details = legacyMailDetails(subject, body)
+	}
 	v := mailView{Title: details.Title, Summary: details.Summary, ConsoleURL: consoleURL,
 		Category: "Уведомление SIEM", Color: "#52647a", Tint: "#edf1f5"}
-	if v.Title == "" {
-		v.Title, v.Summary = subject, body // Messages queued before the HTML upgrade.
-	}
 	switch details.Kind {
 	case "detection":
 		v.Category = "Срабатывание корреляции"
