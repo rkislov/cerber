@@ -306,7 +306,13 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 		rulesDone := make(chan struct{})
 		go func() {
 			defer close(rulesDone)
+			rolloutDone := make(chan struct{})
+			go func() {
+				defer close(rolloutDone)
+				suricatarules.RunRollouts(monitorCtx, store, func(e error) { fmt.Fprintf(errOut, "Suricata rollout: %v\n", e) })
+			}()
 			suricatarules.RunAutomation(monitorCtx, store, func(e error) { fmt.Fprintf(errOut, "Suricata scheduler: %v\n", e) })
+			<-rolloutDone
 		}()
 
 		responseDone := make(chan struct{})

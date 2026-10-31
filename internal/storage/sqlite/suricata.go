@@ -245,6 +245,13 @@ func assignSuricata(ctx context.Context, tx *sql.Tx, c rules.Change, actor, grou
 		return a, rules.ErrConflict
 	}
 	if groupID == "" {
+		held, e := rolloutAgentHeld(ctx, tx, c.AgentID)
+		if e != nil {
+			return a, e
+		}
+		if held {
+			return a, rules.ErrConflict
+		}
 		owners, e := matchingSuricataGroups(ctx, tx, c.AgentID, h.Sensor.Rules.EngineMajor)
 		if e != nil {
 			return a, e
@@ -379,5 +386,9 @@ func suricataBundleUsed(ctx context.Context, tx *sql.Tx, id string) (bool, error
  (SELECT count(*) FROM agent_heartbeats WHERE json_extract(payload,'$.sensor.suricata.applied_id')=?) +
  (SELECT count(*) FROM suricata_feeds WHERE json_extract(payload,'$.latest_id')=?) +
  (SELECT count(*) FROM suricata_group_rules WHERE json_extract(payload,'$.active_id')=? OR json_extract(payload,'$.previous_id')=? OR json_extract(payload,'$.custom_id')=? OR json_extract(payload,'$.bundle_id')=? OR json_extract(payload,'$.built_et_id')=?)`, id, id, id, id, id, id, id, id, id).Scan(&used)
+	if e != nil || used > 0 {
+		return used > 0, e
+	}
+	e = tx.QueryRowContext(ctx, `SELECT count(*) FROM suricata_rollouts r WHERE json_extract(r.payload,'$.candidate_id')=? OR json_extract(r.payload,'$.previous_id')=? OR EXISTS(SELECT 1 FROM json_each(r.payload,'$.members') m WHERE json_extract(m.value,'$.previous_id')=?)`, id, id, id).Scan(&used)
 	return used > 0, e
 }
