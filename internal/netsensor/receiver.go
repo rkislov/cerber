@@ -385,6 +385,7 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 	}()
 	var workers []func() error
 	var files []eventcollector.Source
+	var fileMeters []*meteredFile
 	for _, input := range c.Inputs {
 		i := input
 		if sensorstate.Flow(i.Format) {
@@ -395,17 +396,19 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 			source := eventcollector.RotatingLineFile{LineFile: eventcollector.LineFile{Path: i.Path, Source: i.Source(), Identity: i.ID, Encode: func(line string) ([]byte, error) {
 				return json.Marshal(telemetry.SensorEnvelope{Input: i.ID, Peer: "local", Transport: "file", Profile: "suricata", Line: line})
 			}}}
+			var reader eventcollector.Source = source
 			if c.Capture != nil && i.Path == c.Capture.EVEPath {
 				engine := rules.NativeEngine{Config: *c.Suricata}
-				files = append(files, eventcollector.ManagedEVE{RotatingLineFile: source, RotateBytes: suricatacapture.RotateBytes, Reopen: func(ctx context.Context) error {
+				reader = eventcollector.ManagedEVE{RotatingLineFile: source, RotateBytes: suricatacapture.RotateBytes, Reopen: func(ctx context.Context) error {
 					ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 					defer cancel()
 					_, e := engine.CaptureCommand(ctx, "reopen-log-files", nil)
 					return e
-				}})
-			} else {
-				files = append(files, source)
+				}}
 			}
+			meter := &meteredFile{Source: reader, input: i}
+			fileMeters = append(fileMeters, meter)
+			files = append(files, meter)
 			continue
 		}
 		if i.Protocol == "udp" {
@@ -485,6 +488,9 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 				fmt.Fprintf(log, "sensor delivery/source: %v\n", e)
 			}
 		})
+		for _, f := range fileMeters {
+			f.commitMetrics(r, h.Sources)
+		}
 		if h.LastDeliveryAt != nil {
 			lastDelivery = h.LastDeliveryAt
 		}
@@ -507,9 +513,11 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 				for _, sh := range h.Sources {
 					if sh.Source == i.Source() {
 						m := r.metrics[i.ID]
-						m.status.LastMessageAt = sh.LastReadAt
 						if sh.State == "ok" {
-							m.status.State = "receiving"
+							m.status.State = "listening"
+							if m.status.LastMessageAt != nil {
+								m.status.State = "receiving"
+							}
 						} else if sh.State == "error" || sh.State == "blocked" {
 							m.status.State = "error"
 							m.status.LastError = sh.Code
