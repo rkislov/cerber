@@ -35,6 +35,11 @@ func TestPipelineHealthAlertsRecoveryAndQuota(t *testing.T) {
 	if len(notices) != 2 {
 		t.Fatal(notices)
 	}
+	for _, n := range notices {
+		if n.Details.Kind != "health" || n.Details.Severity == "" {
+			t.Fatal("missing health mail context", n.Details)
+		}
+	}
 	if e = s.SamplePipelineHealth(ctx, now.Add(time.Second)); e != nil {
 		t.Fatal(e)
 	}
@@ -60,6 +65,11 @@ func TestPipelineHealthAlertsRecoveryAndQuota(t *testing.T) {
 	notices, _ = s.HealthNotificationBatch(ctx, 0)
 	if len(notices) != 4 {
 		t.Fatal("recovery notification missing", notices)
+	}
+	for _, n := range notices[2:] {
+		if n.Details.Kind != "recovery" {
+			t.Fatal("recovery mail incorrectly classified", n.Details)
+		}
 	}
 	policy = v.Retention.Policy
 	policy.MaxBytes = 0

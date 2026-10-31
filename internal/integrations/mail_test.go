@@ -71,12 +71,16 @@ func TestSMTPVerifiedTLSMessageDelivery(t *testing.T) {
 		}
 	}()
 	m := SMTP{Host: "127.0.0.1", Port: raw.Addr().(*net.TCPAddr).Port, Security: "tls", From: "cerber@example.org", To: []string{"ib@example.org"}}
-	e = sendSMTPWithTLS(context.Background(), m, "fixture-id", "Проверка SIEM", "Сработал IOC", &tls.Config{RootCAs: roots, ServerName: "example.com", MinVersion: tls.VersionTLS12})
+	e = sendSMTPWithTLS(context.Background(), m, "fixture-id", "Проверка SIEM", "Сработал IOC", sampleMailDetails(), &tls.Config{RootCAs: roots, ServerName: "example.com", MinVersion: tls.VersionTLS12})
 	if e != nil {
 		t.Fatal(e)
 	}
 	select {
 	case message := <-done:
+		bodies := decodeMail(t, []byte(message), "Проверка SIEM")
+		if !strings.Contains(bodies[1], "Серия неудачных входов") || !strings.Contains(bodies[0], "auth.failed_burst") {
+			t.Fatal("SMTP lost HTML/text alternatives")
+		}
 		if !strings.Contains(message, "Message-ID:") || !strings.Contains(message, "Content-Transfer-Encoding: base64") {
 			t.Fatal(message)
 		}
@@ -88,7 +92,7 @@ func TestSMTPVerifiedTLSMessageDelivery(t *testing.T) {
 type fixtureNotifications struct{}
 
 func (fixtureNotifications) NotificationBatch(context.Context, int64) ([]Notification, error) {
-	return []Notification{{Sequence: 1, ID: "fixture", Subject: "test", Body: "fixture"}}, nil
+	return []Notification{{Sequence: 1, ID: "fixture", Subject: "test", Body: "fixture", Details: sampleMailDetails()}}, nil
 }
 func TestMailOutboxSurvivesRestartAndDeduplicates(t *testing.T) {
 	s := testStore(t)

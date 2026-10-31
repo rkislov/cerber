@@ -120,6 +120,17 @@ func (s *Store) NotificationBatch(ctx context.Context, after int64) ([]integrati
 		}
 		n.Subject = "Срабатывание SIEM: " + d.Rule
 		n.Body = d.Title + "\nАгент: " + d.AgentID + "\nID срабатывания: " + d.ID
+		n.Details = integrations.MailDetails{Title: d.Title, Kind: "detection", Severity: d.Severity, OccurredAt: d.CreatedAt,
+			Fields: []integrations.MailField{
+				{Label: "Правило", Value: d.Rule},
+				{Label: "IP источника", Value: d.SourceIP},
+				{Label: "Учётная запись", Value: d.User},
+				{Label: "Агент", Value: d.AgentID, Code: true},
+				{Label: "ID срабатывания", Value: d.ID, Code: true},
+			}}
+		if d.ObserverOnly {
+			n.Details.Summary = "Сетевое наблюдение. Само по себе не подтверждает компрометацию узла."
+		}
 		out = append(out, n)
 	}
 	return out, rows.Err()

@@ -91,6 +91,9 @@ func TestDeliveryAlertPersistsNotifiesAndResolves(t *testing.T) {
 	if e != nil || len(notices) != 1 {
 		t.Fatal(notices, e)
 	}
+	if notices[0].Details.Kind != "alert" || notices[0].Details.Title != alerts.Title(list[0].Kind) || notices[0].Details.Severity != list[0].Severity || notices[0].Details.OccurredAt.IsZero() {
+		t.Fatal("notification lost alert context", notices[0].Details)
+	}
 	if _, e = s.EvaluateAlerts(ctx, now, p); e != nil {
 		t.Fatal(e)
 	}

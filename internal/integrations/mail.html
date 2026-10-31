@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{{.Title}} · CERBER</title>
+  <style>
+    @media only screen and (max-width: 600px) {
+      .outer { padding: 16px 8px !important; }
+      .content { padding: 24px 20px !important; }
+      .brand { padding: 22px 20px !important; }
+      .title { font-size: 24px !important; line-height: 32px !important; }
+      .field-label, .field-value { display: block !important; width: auto !important; }
+      .field-label { padding-bottom: 4px !important; border-bottom: 0 !important; }
+      .field-value { padding-top: 0 !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#f0f3f7;color:#1d2d42;font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;">
+  <div style="display:none;font-size:1px;line-height:1px;color:#f0f3f7;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">{{.Category}}{{if .Severity}} · {{.Severity}}{{end}} · {{.Title}}</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f0f3f7;">
+    <tr><td class="outer" align="center" style="padding:36px 16px;">
+      {{outlookStart}}
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:640px;table-layout:fixed;background-color:#ffffff;border:1px solid #dfe6ee;border-radius:16px;overflow:hidden;">
+        <tr><td class="brand" style="padding:26px 32px;background-color:#101f2e;border-bottom:4px solid #20b39d;">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+            <td width="44" align="center" style="width:44px;height:44px;background-color:#198f82;border-radius:10px;color:#d5fff4;font-size:28px;line-height:44px;font-weight:bold;">C</td>
+            <td style="padding-left:16px;color:#ffffff;font-size:24px;line-height:28px;letter-spacing:3px;font-weight:bold;">CERBER<br><span style="color:#9fb5ca;font-size:10px;line-height:18px;letter-spacing:2px;font-weight:normal;">SECURITY OPERATIONS</span></td>
+          </tr></table>
+        </td></tr>
+        <tr><td class="content" style="padding:32px;">
+          <p style="margin:0 0 14px;color:#65778d;font-size:11px;line-height:18px;font-weight:bold;letter-spacing:1.4px;text-transform:uppercase;">{{.Category}}</p>
+          {{if .Severity}}<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-bottom:18px;"><tr><td style="padding:6px 12px;border-radius:6px;background-color:{{.Tint}};color:{{.Color}};font-size:12px;line-height:18px;font-weight:bold;">{{.Severity}}</td></tr></table>{{end}}
+          <h1 class="title" style="margin:0 0 20px;color:#192d43;font-size:28px;line-height:36px;font-weight:bold;overflow-wrap:anywhere;word-wrap:break-word;word-break:break-word;">{{.Title}}</h1>
+          {{if .Summary}}<p style="margin:0 0 24px;color:#52647a;font-size:15px;line-height:24px;white-space:pre-line;overflow-wrap:anywhere;word-break:break-word;">{{.Summary}}</p>{{end}}
+          {{if .Fields}}<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="table-layout:fixed;border-top:1px solid #e6ebf1;">
+            {{range .Fields}}<tr>
+              <td class="field-label" width="140" valign="top" style="width:140px;padding:14px 12px 14px 0;border-bottom:1px solid #e6ebf1;color:#687b91;font-size:13px;line-height:21px;">{{.Label}}</td>
+              <td class="field-value" valign="top" style="padding:14px 0;border-bottom:1px solid #e6ebf1;color:#24374e;font-size:14px;line-height:21px;overflow-wrap:anywhere;word-wrap:break-word;word-break:break-word;">{{if .Code}}<span style="font-family:Consolas,'Courier New',monospace;font-size:12px;word-break:break-all;">{{wrapID .Value}}</span>{{else}}{{.Value}}{{end}}</td>
+            </tr>{{end}}
+          </table>{{end}}
+          <p style="margin:26px 0 20px;color:#687b91;font-size:14px;line-height:22px;">Подробности и исходные события доступны в консоли SIEM.</p>
+          {{if .ConsoleURL}}<table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" bgcolor="#147f75" style="background-color:#147f75;border:1px solid #147f75;border-radius:8px;mso-padding-alt:14px 24px;"><a href="{{.ConsoleURL}}" style="display:inline-block;padding:14px 24px;color:#ffffff;font-size:14px;line-height:20px;font-weight:bold;text-decoration:none;">Открыть SIEM &#8594;</a></td></tr></table>
+          <p style="margin:14px 0 0;color:#7c8da0;font-size:11px;line-height:18px;overflow-wrap:anywhere;word-break:break-all;">{{.ConsoleURL}}</p>{{end}}
+        </td></tr>
+        <tr><td class="content" style="padding:20px 32px;background-color:#f8fafc;border-top:1px solid #e6ebf1;color:#7c8da0;font-size:11px;line-height:18px;">Автоматическое уведомление CERBER.<br>Получатели настраиваются администратором в разделе «Настройки → SMTP».</td></tr>
+      </table>
+      {{outlookEnd}}
+    </td></tr>
+  </table>
+</body>
+</html>

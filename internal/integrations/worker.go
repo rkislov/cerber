@@ -17,6 +17,7 @@ import (
 type Notification struct {
 	Sequence          int64
 	ID, Subject, Body string
+	Details           MailDetails
 }
 type NotificationSource interface {
 	NotificationBatch(context.Context, int64) ([]Notification, error)
@@ -65,6 +66,16 @@ func OpenWorker(settings *Store, path string, events EventEngine, control Notifi
 	}
 	db.SetMaxOpenConns(1)
 	_, e = db.Exec(`PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS feed(id INTEGER PRIMARY KEY CHECK(id=1),revision TEXT NOT NULL,at TEXT NOT NULL,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS mail(id TEXT PRIMARY KEY,subject TEXT NOT NULL,body TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,next_at TEXT NOT NULL DEFAULT '',sent_at TEXT);CREATE TABLE IF NOT EXISTS cursors(name TEXT PRIMARY KEY,position INTEGER NOT NULL);`)
+	if e != nil {
+		db.Close()
+		return nil, e
+	}
+	// Additive migration preserves pending mail and supports binary rollback.
+	var detailsColumn int
+	e = db.QueryRow("SELECT count(*) FROM pragma_table_info('mail') WHERE name='details'").Scan(&detailsColumn)
+	if e == nil && detailsColumn == 0 {
+		_, e = db.Exec("ALTER TABLE mail ADD COLUMN details TEXT NOT NULL DEFAULT ''")
+	}
 	if e != nil {
 		db.Close()
 		return nil, e
@@ -233,7 +244,11 @@ func (w *Worker) enqueue(ctx context.Context, name string, source NotificationSo
 	}
 	defer tx.Rollback()
 	for _, n := range batch {
-		if _, e = tx.ExecContext(ctx, "INSERT OR IGNORE INTO mail(id,subject,body) VALUES(?,?,?)", name+":"+n.ID, n.Subject, n.Body); e != nil {
+		details, err := json.Marshal(n.Details)
+		if err != nil {
+			return err
+		}
+		if _, e = tx.ExecContext(ctx, "INSERT OR IGNORE INTO mail(id,subject,body,details) VALUES(?,?,?,?)", name+":"+n.ID, n.Subject, n.Body, string(details)); e != nil {
 			return e
 		}
 		after = n.Sequence
@@ -272,9 +287,9 @@ func (w *Worker) mail(ctx context.Context) {
 	}
 	if e == nil {
 		for i := 0; i < 10; i++ {
-			var id, subject, body string
+			var id, subject, body, details string
 			var attempts int
-			e = w.db.QueryRowContext(ctx, "SELECT id,subject,body,attempts FROM mail WHERE state='pending' AND next_at<=? ORDER BY rowid LIMIT 1", time.Now().UTC().Format(time.RFC3339)).Scan(&id, &subject, &body, &attempts)
+			e = w.db.QueryRowContext(ctx, "SELECT id,subject,body,details,attempts FROM mail WHERE state='pending' AND next_at<=? ORDER BY rowid LIMIT 1", time.Now().UTC().Format(time.RFC3339)).Scan(&id, &subject, &body, &details, &attempts)
 			if e == sql.ErrNoRows {
 				e = nil
 				break
@@ -282,7 +297,14 @@ func (w *Worker) mail(ctx context.Context) {
 			if e != nil {
 				break
 			}
-			e = sendSMTP(ctx, m, id, subject, body)
+			var mailDetails MailDetails
+			// Old queue rows have no details; render their original text safely.
+			if details != "" {
+				e = json.Unmarshal([]byte(details), &mailDetails)
+			}
+			if e == nil {
+				e = sendSMTP(ctx, m, id, subject, body, mailDetails)
+			}
 			if e != nil {
 				delay := time.Minute * time.Duration(1<<min(attempts, 10))
 				_, _ = w.db.ExecContext(ctx, "UPDATE mail SET attempts=attempts+1,next_at=? WHERE id=?", time.Now().UTC().Add(delay).Format(time.RFC3339), id)
