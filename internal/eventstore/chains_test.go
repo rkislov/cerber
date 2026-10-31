@@ -163,7 +163,7 @@ func TestChainPolicyVersionsRestartAndCompatibility(t *testing.T) {
 		t.Fatal(history, e)
 	}
 	policies, e := again.RulePolicies(ctx)
-	if e != nil || len(policies) != 16 {
+	if e != nil || len(policies) != len(rulepolicy.Defaults()) {
 		t.Fatal(policies, e)
 	}
 	var native int

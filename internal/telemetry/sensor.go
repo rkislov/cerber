@@ -29,6 +29,12 @@ type SensorEnvelope struct {
 }
 
 type NetworkObservation struct {
+	CaptureInterface  string     `json:"capture_interface,omitempty"`
+	CommunityID       string     `json:"community_id,omitempty"`
+	SignatureID       uint64     `json:"signature_id,omitempty"`
+	SignatureRevision uint32     `json:"signature_revision,omitempty"`
+	Category          string     `json:"category,omitempty"`
+	AlertAction       string     `json:"alert_action,omitempty"`
 	Sampled           bool       `json:"sampled,omitempty"`
 	ReportedAgent     string     `json:"reported_agent,omitempty"`
 	SamplePool        uint32     `json:"sample_pool,omitempty"`
@@ -221,6 +227,9 @@ func normalizeSensor(r RawRecord, n Normalized) Normalized {
 			return bad()
 		}
 		var s struct {
+			Interface       string      `json:"in_iface"`
+			CommunityID     string      `json:"community_id"`
+			Application     string      `json:"app_proto"`
 			Timestamp       string      `json:"timestamp"`
 			Type            string      `json:"event_type"`
 			FlowID          json.Number `json:"flow_id"`
@@ -230,6 +239,8 @@ func normalizeSensor(r RawRecord, n Normalized) Normalized {
 			DestinationPort int         `json:"dest_port"`
 			Protocol        string      `json:"proto"`
 			Alert           struct {
+				Revision  uint32 `json:"rev"`
+				Category  string `json:"category"`
 				Signature string `json:"signature"`
 				ID        uint64 `json:"signature_id"`
 				Severity  int    `json:"severity"`
@@ -256,6 +267,15 @@ func normalizeSensor(r RawRecord, n Normalized) Normalized {
 		n.Network.Kind = "suricata." + s.Type
 		n.Network.TimeBasis = "suricata_clock"
 		n.Network.FlowID = s.FlowID.String()
+		if s.FlowID != "" {
+			if _, e := strconv.ParseUint(s.FlowID.String(), 10, 64); e != nil {
+				return bad()
+			}
+		}
+		if len(s.Interface) > 64 || len(s.CommunityID) > 128 || len(s.Application) > 64 || len(s.Alert.Signature) > 1024 || len(s.Alert.Category) > 256 || len(s.Alert.Action) > 32 {
+			return bad()
+		}
+		n.Network.CaptureInterface, n.Network.CommunityID, n.Network.Application = s.Interface, s.CommunityID, s.Application
 		n.Message = "Suricata · " + s.Type
 		if s.Source != "" || s.Destination != "" {
 			src, e1 := netip.ParseAddr(s.Source)
@@ -298,6 +318,8 @@ func normalizeSensor(r RawRecord, n Normalized) Normalized {
 			n.Message = s.Alert.Signature
 			n.Network.Signature = s.Alert.Signature
 			n.Network.Severity = s.Alert.Severity
+			n.Network.SignatureID, n.Network.SignatureRevision = s.Alert.ID, s.Alert.Revision
+			n.Network.Category, n.Network.AlertAction = s.Alert.Category, s.Alert.Action
 		}
 	} else if r.Raw.Source == "network:syslog" {
 		msg, host, app, at, e := parseSyslog(v.Line, r.Raw.ObservedAt)

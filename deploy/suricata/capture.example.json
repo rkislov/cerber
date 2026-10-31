@@ -1,0 +1,8 @@
+{
+  "interface": "enp2s0",
+  "mode": "span",
+  "eve_path": "/eve/eve.json",
+  "rules_directory": "/rules",
+  "yaml": "/capture/suricata.yaml",
+  "template": "/etc/suricata/suricata.yaml"
+}

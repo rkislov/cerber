@@ -80,3 +80,9 @@ test('IPFIX graph shows template and observation domain without turning observer
  const ctx=vm.createContext({});vm.runInContext(source,ctx);const facts=ctx.chainWindowsFacts({network:{kind:'ipfix',input:'router',exporter:'192.0.2.254',exporter_port:50000,template_id:256,observation_domain:0,export_sequence:42,template_hash:'abc'}});
  assert.ok(facts.some(([k,v])=>k==='Домен наблюдения'&&v==='0'));assert.ok(facts.some(([k,v])=>k==='Шаблон / последовательность'&&v==='256 / 42'));assert.ok(facts.some(([k,v])=>k==='SHA-256 шаблона'&&v==='abc'));
 });
+
+test('standalone Suricata incident shows both endpoints, signature and clickable EVE without inventing accounts',()=>{
+ const o={...step(1,'sensor'),user:'',identity:{},action:'ids_alert',code:'1000001',source_ip:'192.0.2.10',destination_ip:'192.0.2.20',destination_port:445,network:{kind:'suricata.alert',input:'eve',exporter:'local',transport:'file',capture_interface:'span0',protocol:6,source_port:40000,signature:'CERBER test',signature_id:1000001,signature_revision:2,severity:1,category:'test',flow_id:'18446744073709551610',community_id:'1:abc',alert_action:'allowed'}};
+ const m=model([detection([o])]);assert.equal(m.accounts,0);assert.equal(m.sessions,0);const s=renderSetup();s.ctx.renderChainGraph(s.root,m);const nodes=s.all(s.root);for(const text of ['192.0.2.10:40000','192.0.2.20:445','Suricata SID 1000001'])assert.ok(nodes.some(n=>n.textContent===text));
+ nodes.find(n=>n.tag==='button'&&n.textContent==='Исходный EVE / поток →').handlers.click();assert.deepEqual(s.opened,[o.event_id]);assert.ok(nodes.some(n=>n.textContent==='Сигнатура: CERBER test'));assert.ok(nodes.some(n=>n.textContent==='Flow ID: 18446744073709551610'));
+});

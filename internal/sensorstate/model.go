@@ -4,6 +4,7 @@ package sensorstate
 
 import (
 	"errors"
+	"github.com/rkislov/cerber/internal/suricatacapture"
 	rules "github.com/rkislov/cerber/internal/suricatarules"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"net/netip"
@@ -81,19 +82,20 @@ type Definition struct {
 	Listen   string `json:"listen,omitempty"`
 }
 type Status struct {
-	Rules             *rules.Status `json:"suricata,omitempty"`
-	SFlowVersion      int           `json:"sflow_version,omitempty"`
-	MonitoringVersion int           `json:"monitoring_version,omitempty"`
-	Watches           []WatchStatus `json:"watches,omitempty"`
-	InputManagement   int           `json:"input_management,omitempty"`
-	BaseInputs        []Definition  `json:"base_inputs,omitempty"`
-	ConfigErrorInput  string        `json:"config_error_input,omitempty"`
-	StartedAt         time.Time     `json:"started_at"`
-	ObservedAt        time.Time     `json:"observed_at"`
-	SampleSeconds     float64       `json:"sample_seconds"`
-	AppliedRevision   int64         `json:"applied_revision"`
-	ConfigError       string        `json:"config_error,omitempty"`
-	Inputs            []Input       `json:"inputs"`
+	Capture           *suricatacapture.Status `json:"capture,omitempty"`
+	Rules             *rules.Status           `json:"suricata,omitempty"`
+	SFlowVersion      int                     `json:"sflow_version,omitempty"`
+	MonitoringVersion int                     `json:"monitoring_version,omitempty"`
+	Watches           []WatchStatus           `json:"watches,omitempty"`
+	InputManagement   int                     `json:"input_management,omitempty"`
+	BaseInputs        []Definition            `json:"base_inputs,omitempty"`
+	ConfigErrorInput  string                  `json:"config_error_input,omitempty"`
+	StartedAt         time.Time               `json:"started_at"`
+	ObservedAt        time.Time               `json:"observed_at"`
+	SampleSeconds     float64                 `json:"sample_seconds"`
+	AppliedRevision   int64                   `json:"applied_revision"`
+	ConfigError       string                  `json:"config_error,omitempty"`
+	Inputs            []Input                 `json:"inputs"`
 }
 
 func Flow(format string) bool {
@@ -267,6 +269,9 @@ func ValidCode(s string) bool {
 	return false
 }
 func (s Status) Validate() error {
+	if s.Capture != nil && s.Capture.Validate() != nil {
+		return ErrInvalid
+	}
 	if s.Rules != nil && s.Rules.Validate() != nil {
 		return ErrInvalid
 	}

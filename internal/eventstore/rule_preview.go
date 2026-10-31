@@ -26,7 +26,7 @@ func (s *Store) PreviewRule(ctx context.Context, req RulePreviewRequest, index *
 	if e != nil || len(req.EventIDs) < 1 || len(req.EventIDs) > 100 {
 		return out, rulepolicy.ErrInvalid
 	}
-	if rulepolicy.Single(req.Rule) && req.Rule != "windows.audit_log_cleared" && index == nil {
+	if (req.Rule == "threatfox.ip_match" || req.Rule == "threatfox.ioc_match") && index == nil {
 		return out, rulepolicy.ErrNotFound
 	}
 	out.Policy = cfg

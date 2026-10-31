@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "server": "https://siem.example.org",
+  "credentials": "/run/credentials.json",
+  "spool": "/state/queue.db",
+  "inputs": [{"id": "suricata-eve", "format": "suricata", "protocol": "file", "path": "/eve/eve.json"}],
+  "suricata": {
+    "directory": "/rules",
+    "binary": "/usr/bin/suricata",
+    "yaml": "/capture/suricata.yaml",
+    "socket": "/rules/suricata.socket",
+    "public_key": "BASE64_ED25519_PUBLIC_KEY_FROM_ADMIN"
+  },
+  "capture": {"interface": "enp2s0", "mode": "span", "eve_path": "/eve/eve.json"}
+}

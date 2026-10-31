@@ -68,3 +68,15 @@ func TestSuricataAlertHasNoInventedProcessOrVerdict(t *testing.T) {
 		t.Fatalf("%+v", n)
 	}
 }
+
+func TestSuricataFlowIDMustBeAnExactUnsignedInteger(t *testing.T) {
+	at := time.Now().UTC()
+	for _, id := range []string{"-1", "1.5", "1e3", "18446744073709551616"} {
+		line := `{"timestamp":"` + at.Format(time.RFC3339Nano) + `","event_type":"alert","flow_id":` + id + `,"src_ip":"192.0.2.1","dest_ip":"192.0.2.2","proto":"ICMP","alert":{"signature_id":42,"signature":"test","severity":2}}`
+		data, _ := json.Marshal(SensorEnvelope{Input: "eve", Peer: "local", Transport: "file", Profile: "suricata", Line: line})
+		n := Normalize(RawRecord{ReceivedAt: at, Raw: Raw{Source: "network:suricata", Data: data}})
+		if n.Status != "quarantine" {
+			t.Fatal(id, n)
+		}
+	}
+}
