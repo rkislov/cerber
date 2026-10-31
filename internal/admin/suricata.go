@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"sync"
-	"time"
 
 	rules "github.com/rkislov/cerber/internal/suricatarules"
 )
@@ -20,15 +19,12 @@ type suricataStore interface {
 	AssignSuricata(context.Context, rules.Change) (rules.Assignment, error)
 	SuricataHistory(context.Context, string) ([]map[string]any, error)
 }
-type suricataService struct {
-	mu       sync.Mutex
-	work     sync.Mutex
-	running  bool
-	message  string
-	finished time.Time
-}
+type suricataService struct{ work sync.Mutex }
 
 func (h *suricataService) serve(base Store, w http.ResponseWriter, r *http.Request, u User) bool {
+	if serveSuricataAutomation(base, w, r, u) {
+		return true
+	}
 	if r.URL.Path != "/admin/api/suricata" {
 		return false
 	}
@@ -59,9 +55,21 @@ func (h *suricataService) serve(base Store, w http.ResponseWriter, r *http.Reque
 			fail(e)
 			return true
 		}
-		h.mu.Lock()
-		job := map[string]any{"running": h.running, "message": h.message, "finished_at": h.finished}
-		h.mu.Unlock()
+		job := map[string]any{"running": false, "message": "Расписание, состояние и история ET Open — ниже."}
+		if automation, ok := base.(suricataAutomationStore); ok {
+			feeds, e := automation.SuricataFeeds(r.Context())
+			if e != nil {
+				fail(e)
+				return true
+			}
+			for _, f := range feeds {
+				if f.State == "downloading" || f.Requested {
+					job["running"] = true
+					job["message"] = "Обновление ET Open выполняется планировщиком"
+				}
+			}
+		}
+
 		response := map[string]any{"versions": versions, "public_key": key, "download": job, "max_versions": rules.MaxVersions, "max_storage": rules.MaxStorage, "source_url": rules.ETURL}
 		if id := r.URL.Query().Get("agent"); id != "" {
 			a, e := s.SuricataAssignment(r.Context(), id)
@@ -104,48 +112,36 @@ func (h *suricataService) serve(base Store, w http.ResponseWriter, r *http.Reque
 		http.Error(w, "rule operation running", 429)
 		return true
 	}
-	release := true
-	defer func() {
-		if release {
-			h.work.Unlock()
-		}
-	}()
+	defer h.work.Unlock()
 	switch c.Action {
 	case "download":
 		if c.EngineMajor != 7 && c.EngineMajor != 8 {
 			fail(rules.ErrInvalid)
 			return true
 		}
-		h.mu.Lock()
-		if h.running {
-			h.mu.Unlock()
-			http.Error(w, "download running", 409)
+		automation, ok := base.(suricataAutomationStore)
+		if !ok {
+			http.Error(w, "scheduler unavailable", 503)
 			return true
 		}
-		h.running = true
-		h.message = "Загрузка ET Open"
-		h.mu.Unlock()
-		release = false
-		go func() {
-			defer h.work.Unlock()
-			ctx, cancel := context.WithTimeout(WithPrincipal(context.Background(), u), 3*time.Minute)
-			defer cancel()
-			b, e := rules.DownloadET(ctx, c.EngineMajor)
-			if e == nil {
-				_, e = s.PutSuricataBundle(ctx, b)
+		feeds, e := automation.SuricataFeeds(r.Context())
+		if e != nil {
+			fail(e)
+			return true
+		}
+		for _, f := range feeds {
+			if f.EngineMajor == c.EngineMajor {
+				_, e = automation.SetSuricataFeed(r.Context(), rules.FeedChange{EngineMajor: c.EngineMajor, ExpectedRevision: f.Revision, RunNow: true})
+				if e != nil {
+					fail(e)
+					return true
+				}
 			}
-			h.mu.Lock()
-			defer h.mu.Unlock()
-			h.running = false
-			h.finished = time.Now().UTC()
-			h.message = "ET Open загружен в каталог. Назначьте версию сенсору для проверки и применения."
-			if e != nil {
-				h.message = "Загрузка не завершена: " + e.Error()
-			}
-		}()
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		writeJSON(w, map[string]bool{"started": true})
+
 	case "upload":
 		if len(c.Rules) > 1<<20 {
 			fail(rules.ErrLimit)

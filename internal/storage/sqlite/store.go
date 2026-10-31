@@ -20,6 +20,9 @@ import (
 //go:embed suricata.sql
 var suricataSchema string
 
+//go:embed suricata_automation.sql
+var suricataAutomationSchema string
+
 //go:embed sensor_monitor.sql
 var sensorMonitorSchema string
 
@@ -213,6 +216,9 @@ func (s *Store) init(ctx context.Context) error {
 		}
 	}
 
+	if _, err = tx.ExecContext(ctx, suricataAutomationSchema); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 func stamp(t time.Time) string          { return t.UTC().Format("2006-01-02T15:04:05.000000000Z") }

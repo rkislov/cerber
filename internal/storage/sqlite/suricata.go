@@ -90,6 +90,16 @@ func (s *Store) PutSuricataBundle(ctx context.Context, b rules.Bundle) (rules.Ma
 	if e != nil {
 		return rules.Manifest{}, e
 	}
+	m, e := putSuricataBundle(ctx, tx, b, u.Username, false)
+	if e != nil {
+		return m, e
+	}
+	return m, tx.Commit()
+}
+
+// Caller must validate the bundle outside the write transaction.
+func putSuricataBundle(ctx context.Context, tx *sql.Tx, b rules.Bundle, actor string, automatic bool) (rules.Manifest, error) {
+	var e error
 	if old, e := suricataBundle(ctx, tx, b.Manifest.ID); e == nil {
 		return old.Manifest, nil
 	} else if !errors.Is(e, rules.ErrNotFound) {
@@ -98,6 +108,56 @@ func (s *Store) PutSuricataBundle(ctx context.Context, b rules.Bundle) (rules.Ma
 	var count, size int
 	if e = tx.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(length(data)),0) FROM suricata_bundles").Scan(&count, &size); e != nil {
 		return rules.Manifest{}, e
+	}
+	if automatic {
+		for count >= rules.MaxVersions || size+len(b.Data) > rules.MaxStorage {
+			var id string
+			var bytes int
+			rows, e := tx.QueryContext(ctx, "SELECT b.id,length(b.data) FROM suricata_bundles b JOIN suricata_auto_bundles a ON a.id=b.id ORDER BY json_extract(b.manifest,'$.created_at'),b.id")
+			if e != nil {
+				return rules.Manifest{}, e
+			}
+			type candidate struct {
+				id    string
+				bytes int
+			}
+			var candidates []candidate
+			for rows.Next() {
+				var c candidate
+				if e = rows.Scan(&c.id, &c.bytes); e != nil {
+					rows.Close()
+					return rules.Manifest{}, e
+				}
+				candidates = append(candidates, c)
+			}
+			e = rows.Err()
+			rows.Close()
+			if e != nil {
+				return rules.Manifest{}, e
+			}
+			for _, c := range candidates {
+				used, e := suricataBundleUsed(ctx, tx, c.id)
+				if e != nil {
+					return rules.Manifest{}, e
+				}
+				if !used {
+					id = c.id
+					bytes = c.bytes
+					break
+				}
+			}
+			if id == "" {
+				return rules.Manifest{}, rules.ErrLimit
+			}
+			if _, e = tx.ExecContext(ctx, "DELETE FROM suricata_bundles WHERE id=?", id); e != nil {
+				return rules.Manifest{}, e
+			}
+			if e = suricataAudit(ctx, tx, "suricata.auto_pruned", id, actor, map[string]string{"id": id}); e != nil {
+				return rules.Manifest{}, e
+			}
+			count--
+			size -= bytes
+		}
 	}
 	if count >= rules.MaxVersions || size+len(b.Data) > rules.MaxStorage {
 		return rules.Manifest{}, rules.ErrLimit
@@ -110,17 +170,23 @@ func (s *Store) PutSuricataBundle(ctx context.Context, b rules.Bundle) (rules.Ma
 		return rules.Manifest{}, rules.ErrInvalid
 	}
 	b.Manifest.CreatedAt = time.Now().UTC()
-	b.Manifest.CreatedBy = u.Username
+	b.Manifest.CreatedBy = actor
 	b.Manifest.Sign(ed25519.PrivateKey(key))
 	m, _ := json.Marshal(b.Manifest)
 	if _, e = tx.ExecContext(ctx, "INSERT INTO suricata_bundles VALUES(?,?,?)", b.Manifest.ID, string(m), b.Data); e != nil {
 		return rules.Manifest{}, e
 	}
-	if e = suricataAudit(ctx, tx, "suricata.bundle_created", b.Manifest.ID, u.Username, b.Manifest); e != nil {
+	if e = suricataAudit(ctx, tx, "suricata.bundle_created", b.Manifest.ID, actor, b.Manifest); e != nil {
 		return rules.Manifest{}, e
 	}
-	return b.Manifest, tx.Commit()
+	if automatic {
+		if _, e = tx.ExecContext(ctx, "INSERT INTO suricata_auto_bundles VALUES(?)", b.Manifest.ID); e != nil {
+			return rules.Manifest{}, e
+		}
+	}
+	return b.Manifest, nil
 }
+
 func suricataAssignment(ctx context.Context, q rowQuerier, id string) (rules.Assignment, error) {
 	var a rules.Assignment
 	var p string
@@ -150,6 +216,14 @@ func (s *Store) AssignSuricata(ctx context.Context, c rules.Change) (rules.Assig
 	if e != nil {
 		return a, e
 	}
+	a, e = assignSuricata(ctx, tx, c, u.Username, "", 0)
+	if e != nil {
+		return a, e
+	}
+	return a, tx.Commit()
+}
+func assignSuricata(ctx context.Context, tx *sql.Tx, c rules.Change, actor, groupID string, groupRevision int64) (rules.Assignment, error) {
+	var a rules.Assignment
 	old, e := suricataAssignment(ctx, tx, c.AgentID)
 	if e != nil {
 		return a, e
@@ -170,6 +244,15 @@ func (s *Store) AssignSuricata(ctx context.Context, c rules.Change) (rules.Assig
 	if json.Unmarshal([]byte(payload), &h) != nil || h.Sensor == nil || h.Sensor.Rules == nil || h.Sensor.Rules.State == "unconfigured" || revoked {
 		return a, rules.ErrConflict
 	}
+	if groupID == "" {
+		owners, e := matchingSuricataGroups(ctx, tx, c.AgentID, h.Sensor.Rules.EngineMajor)
+		if e != nil {
+			return a, e
+		}
+		if len(owners) > 0 {
+			return a, rules.ErrConflict
+		}
+	}
 	if c.Rollback {
 		c.BundleID = old.PreviousID
 	}
@@ -187,7 +270,7 @@ func (s *Store) AssignSuricata(ctx context.Context, c rules.Change) (rules.Assig
 			previous = ""
 		}
 	}
-	a = rules.Assignment{Revision: old.Revision + 1, Bundle: b.Manifest, PreviousID: previous, UpdatedAt: time.Now().UTC(), UpdatedBy: u.Username}
+	a = rules.Assignment{GroupID: groupID, GroupRevision: groupRevision, Revision: old.Revision + 1, Bundle: b.Manifest, PreviousID: previous, UpdatedAt: time.Now().UTC(), UpdatedBy: actor}
 	p, _ := json.Marshal(a)
 	if _, e = tx.ExecContext(ctx, "INSERT INTO suricata_assignments VALUES(?,?) ON CONFLICT(agent_id) DO UPDATE SET payload=excluded.payload", c.AgentID, string(p)); e != nil {
 		return a, e
@@ -196,14 +279,15 @@ func (s *Store) AssignSuricata(ctx context.Context, c rules.Change) (rules.Assig
 	if c.Rollback {
 		kind = "suricata.rollback_requested"
 	}
-	if e = suricataAudit(ctx, tx, kind, c.AgentID, u.Username, a); e != nil {
+	if e = suricataAudit(ctx, tx, kind, c.AgentID, actor, a); e != nil {
 		return a, e
 	}
 	if e = suricataHistory(ctx, tx, c.AgentID, kind, a); e != nil {
 		return a, e
 	}
-	return a, tx.Commit()
+	return a, nil
 }
+
 func (s *Store) DeleteSuricataBundle(ctx context.Context, id string) error {
 	if !rules.ValidID(id) {
 		return rules.ErrInvalid
@@ -217,12 +301,11 @@ func (s *Store) DeleteSuricataBundle(ctx context.Context, id string) error {
 	if e != nil {
 		return e
 	}
-	var used int
-	e = tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM suricata_assignments WHERE json_extract(payload,'$.bundle.id')=? OR json_extract(payload,'$.previous_id')=?) + (SELECT count(*) FROM agent_heartbeats WHERE json_extract(payload,'$.sensor.suricata.applied_id')=?)`, id, id, id).Scan(&used)
+	used, e := suricataBundleUsed(ctx, tx, id)
 	if e != nil {
 		return e
 	}
-	if used > 0 {
+	if used {
 		return rules.ErrConflict
 	}
 	if _, e = tx.ExecContext(ctx, "DELETE FROM suricata_bundles WHERE id=?", id); e != nil {
@@ -287,4 +370,14 @@ func (s *Store) SuricataHistory(ctx context.Context, id string) ([]map[string]an
 		items = append(items, map[string]any{"at": at, "kind": kind, "data": json.RawMessage(p)})
 	}
 	return items, rows.Err()
+}
+
+func suricataBundleUsed(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
+	var used int
+	e := tx.QueryRowContext(ctx, `SELECT
+ (SELECT count(*) FROM suricata_assignments WHERE json_extract(payload,'$.bundle.id')=? OR json_extract(payload,'$.previous_id')=?) +
+ (SELECT count(*) FROM agent_heartbeats WHERE json_extract(payload,'$.sensor.suricata.applied_id')=?) +
+ (SELECT count(*) FROM suricata_feeds WHERE json_extract(payload,'$.latest_id')=?) +
+ (SELECT count(*) FROM suricata_group_rules WHERE json_extract(payload,'$.active_id')=? OR json_extract(payload,'$.previous_id')=? OR json_extract(payload,'$.custom_id')=? OR json_extract(payload,'$.bundle_id')=? OR json_extract(payload,'$.built_et_id')=?)`, id, id, id, id, id, id, id, id, id).Scan(&used)
+	return used > 0, e
 }
