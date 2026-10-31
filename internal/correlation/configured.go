@@ -13,6 +13,8 @@ func Configured(rule string, n telemetry.Normalized, previous []telemetry.Normal
 	}
 	title, severity := "", "medium"
 	switch rule {
+	case "suricata.alert":
+		return Suricata(n)
 	case "auth.repeated_failures", "auth.success_after_failures":
 		if n.Class != "authentication" || n.User == "" || n.SourceIP == "" || len(previous) < threshold {
 			return nil
@@ -82,6 +84,8 @@ func Configured(rule string, n telemetry.Normalized, previous []telemetry.Normal
 }
 func CandidateRules(n telemetry.Normalized) []string {
 	switch n.Class {
+	case "network_alert":
+		return []string{"suricata.alert"}
 	case "authentication":
 		if n.Outcome == "failure" {
 			return []string{"auth.repeated_failures"}

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rkislov/cerber/internal/suricatacapture"
 	rules "github.com/rkislov/cerber/internal/suricatarules"
 	"io"
 	"net"
@@ -391,9 +392,20 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 		}
 		r.states[i.Source()] = telemetry.SourceHealth{Source: i.Source(), State: "not_attempted"}
 		if i.Protocol == "file" {
-			files = append(files, eventcollector.RotatingLineFile{LineFile: eventcollector.LineFile{Path: i.Path, Source: i.Source(), Identity: i.ID, Encode: func(line string) ([]byte, error) {
+			source := eventcollector.RotatingLineFile{LineFile: eventcollector.LineFile{Path: i.Path, Source: i.Source(), Identity: i.ID, Encode: func(line string) ([]byte, error) {
 				return json.Marshal(telemetry.SensorEnvelope{Input: i.ID, Peer: "local", Transport: "file", Profile: "suricata", Line: line})
-			}}})
+			}}}
+			if c.Capture != nil && i.Path == c.Capture.EVEPath {
+				engine := rules.NativeEngine{Config: *c.Suricata}
+				files = append(files, eventcollector.ManagedEVE{RotatingLineFile: source, RotateBytes: suricatacapture.RotateBytes, Reopen: func(ctx context.Context) error {
+					ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+					defer cancel()
+					_, e := engine.CaptureCommand(ctx, "reopen-log-files", nil)
+					return e
+				}})
+			} else {
+				files = append(files, source)
+			}
 			continue
 		}
 		if i.Protocol == "udp" {
@@ -511,12 +523,18 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 		r.metricsMu.Unlock()
 		if !time.Now().Before(nextHeartbeat) {
 			sensor := r.snapshot(c.Inputs)
+			if c.Capture != nil {
+				capture := suricatacapture.Probe(ctx, *c.Capture, (rules.NativeEngine{Config: *c.Suricata}).CaptureCommand)
+				sensor.Capture = &capture
+			}
 			rs := rules.Status{Version: 1, State: "unconfigured", UpdatedAt: time.Now().UTC()}
 			if ruleManager != nil {
 				rs = ruleManager.Snapshot()
 			}
 			sensor.Rules = &rs
-			receipt, heartbeatErr := client.Heartbeat(cycleCtx, ingest.Heartbeat{SchemaVersion: 1, AgentID: credentials.AgentID, ObservedAt: time.Now().UTC(), Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectionStatus: "not_attempted", DeliveryStatus: "not_attempted", Events: &h, Sensor: &sensor})
+			heartbeatCtx, heartbeatDone := context.WithTimeout(ctx, 10*time.Second)
+			receipt, heartbeatErr := client.Heartbeat(heartbeatCtx, ingest.Heartbeat{SchemaVersion: 1, AgentID: credentials.AgentID, ObservedAt: time.Now().UTC(), Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectionStatus: "not_attempted", DeliveryStatus: "not_attempted", Events: &h, Sensor: &sensor})
+			heartbeatDone()
 			e = heartbeatErr
 			if e == nil && receipt.Suricata != nil && ruleManager != nil {
 				ruleManager.Offer(*receipt.Suricata)

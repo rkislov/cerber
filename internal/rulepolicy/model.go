@@ -56,7 +56,7 @@ type Change struct {
 
 func Defaults() map[string]Config {
 	out := map[string]Config{}
-	for id, threshold := range map[string]int{"chain.kerberos_logon": 2, "chain.explicit_credentials_logon": 2, "chain.domain_account_hosts": 3, "chain.logon_guid_hosts": 2, "chain.ssh_key_hosts": 3, "chain.remote_logon_audit_clear": 2, "auth.repeated_failures": 5, "auth.success_after_failures": 5, "firewall.syn_scan": 20, "firewall.denied_burst": 20, "firewall.port_scan": 20, "fess.blocked_burst": 10, "fess.allowed_after_blocks": 5, "windows.audit_log_cleared": 1, "threatfox.ip_match": 1, "threatfox.ioc_match": 1} {
+	for id, threshold := range map[string]int{"suricata.alert": 1, "chain.kerberos_logon": 2, "chain.explicit_credentials_logon": 2, "chain.domain_account_hosts": 3, "chain.logon_guid_hosts": 2, "chain.ssh_key_hosts": 3, "chain.remote_logon_audit_clear": 2, "auth.repeated_failures": 5, "auth.success_after_failures": 5, "firewall.syn_scan": 20, "firewall.denied_burst": 20, "firewall.port_scan": 20, "fess.blocked_burst": 10, "fess.allowed_after_blocks": 5, "windows.audit_log_cleared": 1, "threatfox.ip_match": 1, "threatfox.ioc_match": 1} {
 		window, suppression := 300, 300
 		if strings.HasPrefix(id, "chain.") {
 			window, suppression = 900, 900
@@ -71,12 +71,15 @@ func Defaults() map[string]Config {
 			window = 0
 			suppression = 0
 		}
+		if id == "suricata.alert" {
+			suppression = 60
+		}
 		out[id] = Config{Enabled: true, Threshold: threshold, WindowSeconds: window, SuppressionSeconds: suppression, GroupIDs: []string{}, ExcludeAgents: []string{}, ExcludeUsers: []string{}, ExcludeSourceCIDRs: []string{}, ExcludeDestinationCIDRs: []string{}}
 	}
 	return out
 }
 func Single(id string) bool {
-	return id == "windows.audit_log_cleared" || strings.HasPrefix(id, "threatfox.")
+	return id == "suricata.alert" || id == "windows.audit_log_cleared" || strings.HasPrefix(id, "threatfox.")
 }
 func Text(s string, max int) bool {
 	if s == "" || len(s) > max || !utf8.ValidString(s) {
@@ -94,7 +97,7 @@ func Canonical(rule string, c Config) (Config, error) {
 		return c, ErrInvalid
 	}
 	if Single(rule) {
-		if c.Threshold != 1 || c.WindowSeconds != 0 || c.SuppressionSeconds != 0 {
+		if c.Threshold != 1 || c.WindowSeconds != 0 || (rule != "suricata.alert" && c.SuppressionSeconds != 0 || c.SuppressionSeconds < 0 || c.SuppressionSeconds > 3600) {
 			return c, ErrInvalid
 		}
 	} else if c.Threshold < 1 || c.Threshold > 100 || c.WindowSeconds < 10 || c.WindowSeconds > 3600 || c.SuppressionSeconds < 0 || c.SuppressionSeconds > 3600 {

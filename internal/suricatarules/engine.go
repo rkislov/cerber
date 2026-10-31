@@ -116,6 +116,16 @@ func (e NativeEngine) socket(ctx context.Context, command string, args map[strin
 	}
 	return response.Message, nil
 }
+
+// CaptureCommand exposes only bounded diagnostics and log reopen to the local
+// capture integration. It cannot be used for shutdown or arbitrary mutations.
+func (e NativeEngine) CaptureCommand(ctx context.Context, command string, args map[string]string) (json.RawMessage, error) {
+	switch command {
+	case "version", "uptime", "capture-mode", "iface-list", "iface-stat", "reopen-log-files":
+		return e.socket(ctx, command, args)
+	}
+	return nil, ErrInvalid
+}
 func (e NativeEngine) Reload(ctx context.Context, count int) error {
 	// Check the *running* engine loads precisely the managed absolute rule file.
 	b, err := e.socket(ctx, "conf-get", map[string]string{"variable": "rule-files.0"})

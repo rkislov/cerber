@@ -1,0 +1,48 @@
+services:
+  suricata:
+    image: cerber-sensor:local
+    build: .
+    command: ["-capture-config", "/capture/runtime.json"]
+    network_mode: host
+    user: "0:1000"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_RAW, NET_ADMIN, DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    mem_limit: 2500m
+    memswap_limit: 2500m
+    cpus: 1
+    pids_limit: 64
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    volumes:
+      - ./runtime:/capture
+      - ./rules:/rules
+      - ./eve:/eve
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "2"}
+  sensor:
+    image: cerber-sensor:local
+    command: ["-config", "/run/sensor.json"]
+    network_mode: host
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    mem_limit: 1600m
+    memswap_limit: 1600m
+    cpus: 1
+    pids_limit: 64
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    volumes:
+      - ./sensor.json:/run/sensor.json:ro
+      - ./credentials.json:/run/credentials.json:ro
+      - ./state:/state
+      - ./runtime:/capture:ro
+      - ./rules:/rules
+      - ./eve:/eve
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "2"}

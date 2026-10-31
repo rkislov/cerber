@@ -26,3 +26,12 @@ target/
 *.db
 *.db-shm
 *.db-wal
+
+# Local Suricata deployment state and enrollment secrets
+/deploy/suricata/cerber-sensor
+/deploy/suricata/sensor.json
+/deploy/suricata/credentials.json
+/deploy/suricata/runtime/
+/deploy/suricata/rules/
+/deploy/suricata/eve/
+/deploy/suricata/state/

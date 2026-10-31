@@ -5,6 +5,7 @@ package netsensor
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/rkislov/cerber/internal/suricatacapture"
 	rules "github.com/rkislov/cerber/internal/suricatarules"
 	"github.com/rkislov/cerber/internal/telemetry"
 	"io"
@@ -27,13 +28,14 @@ type Input struct {
 	ClientCA           string   `json:"client_ca,omitempty"`
 }
 type Config struct {
-	Suricata      *rules.Config `json:"suricata,omitempty"`
-	SchemaVersion int           `json:"schema_version"`
-	Server        string        `json:"server"`
-	Credentials   string        `json:"credentials"`
-	CACert        string        `json:"ca_cert,omitempty"`
-	Spool         string        `json:"spool"`
-	Inputs        []Input       `json:"inputs"`
+	Capture       *suricatacapture.Config `json:"capture,omitempty"`
+	Suricata      *rules.Config           `json:"suricata,omitempty"`
+	SchemaVersion int                     `json:"schema_version"`
+	Server        string                  `json:"server"`
+	Credentials   string                  `json:"credentials"`
+	CACert        string                  `json:"ca_cert,omitempty"`
+	Spool         string                  `json:"spool"`
+	Inputs        []Input                 `json:"inputs"`
 }
 
 func Load(path string) (Config, error) {
@@ -65,6 +67,18 @@ func (i Input) Source() string {
 	}
 }
 func (c Config) Validate() error {
+	if c.Capture != nil {
+		if c.Capture.Validate() != nil || c.Suricata == nil {
+			return fmt.Errorf("capture requires local Suricata engine settings")
+		}
+		found := false
+		for _, i := range c.Inputs {
+			found = found || i.Format == "suricata" && i.Protocol == "file" && i.Path == c.Capture.EVEPath
+		}
+		if !found {
+			return fmt.Errorf("capture EVE path must match the exclusive local Suricata file input")
+		}
+	}
 	if c.Suricata != nil {
 		if e := c.Suricata.Validate(); e != nil {
 			return e

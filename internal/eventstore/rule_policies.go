@@ -18,7 +18,7 @@ func (s *Store) initRulePolicies(ctx context.Context) error {
 		return e
 	}
 	defer tx.Rollback()
-	_, e = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS correlation_policy_versions(rule TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(rule,revision));CREATE TABLE IF NOT EXISTS correlation_policy_active(rule TEXT PRIMARY KEY,revision INTEGER NOT NULL,FOREIGN KEY(rule,revision) REFERENCES correlation_policy_versions(rule,revision));CREATE TABLE IF NOT EXISTS correlation_chain_policy_versions(rule TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(rule,revision));CREATE TABLE IF NOT EXISTS correlation_chain_policy_active(rule TEXT PRIMARY KEY,revision INTEGER NOT NULL,FOREIGN KEY(rule,revision) REFERENCES correlation_chain_policy_versions(rule,revision));CREATE TABLE IF NOT EXISTS correlation_windows_policy_versions(rule TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(rule,revision));CREATE TABLE IF NOT EXISTS correlation_windows_policy_active(rule TEXT PRIMARY KEY,revision INTEGER NOT NULL,FOREIGN KEY(rule,revision) REFERENCES correlation_windows_policy_versions(rule,revision));`)
+	_, e = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS correlation_sensor_policy_versions(rule TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(rule,revision));CREATE TABLE IF NOT EXISTS correlation_sensor_policy_active(rule TEXT PRIMARY KEY,revision INTEGER NOT NULL,FOREIGN KEY(rule,revision) REFERENCES correlation_sensor_policy_versions(rule,revision));CREATE TABLE IF NOT EXISTS correlation_policy_versions(rule TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(rule,revision));CREATE TABLE IF NOT EXISTS correlation_policy_active(rule TEXT PRIMARY KEY,revision INTEGER NOT NULL,FOREIGN KEY(rule,revision) REFERENCES correlation_policy_versions(rule,revision));CREATE TABLE IF NOT EXISTS correlation_chain_policy_versions(rule TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(rule,revision));CREATE TABLE IF NOT EXISTS correlation_chain_policy_active(rule TEXT PRIMARY KEY,revision INTEGER NOT NULL,FOREIGN KEY(rule,revision) REFERENCES correlation_chain_policy_versions(rule,revision));CREATE TABLE IF NOT EXISTS correlation_windows_policy_versions(rule TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(rule,revision));CREATE TABLE IF NOT EXISTS correlation_windows_policy_active(rule TEXT PRIMARY KEY,revision INTEGER NOT NULL,FOREIGN KEY(rule,revision) REFERENCES correlation_windows_policy_versions(rule,revision));`)
 	if e != nil {
 		return e
 	}
@@ -38,7 +38,7 @@ func (s *Store) initRulePolicies(ctx context.Context) error {
 func loadRulePolicies(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }) (map[string]rulepolicy.Version, error) {
-	rows, e := q.QueryContext(ctx, "SELECT v.payload FROM correlation_policy_active a JOIN correlation_policy_versions v ON v.rule=a.rule AND v.revision=a.revision UNION ALL SELECT v.payload FROM correlation_chain_policy_active a JOIN correlation_chain_policy_versions v ON v.rule=a.rule AND v.revision=a.revision UNION ALL SELECT v.payload FROM correlation_windows_policy_active a JOIN correlation_windows_policy_versions v ON v.rule=a.rule AND v.revision=a.revision")
+	rows, e := q.QueryContext(ctx, "SELECT v.payload FROM correlation_sensor_policy_active a JOIN correlation_sensor_policy_versions v ON v.rule=a.rule AND v.revision=a.revision UNION ALL SELECT v.payload FROM correlation_policy_active a JOIN correlation_policy_versions v ON v.rule=a.rule AND v.revision=a.revision UNION ALL SELECT v.payload FROM correlation_chain_policy_active a JOIN correlation_chain_policy_versions v ON v.rule=a.rule AND v.revision=a.revision UNION ALL SELECT v.payload FROM correlation_windows_policy_active a JOIN correlation_windows_policy_versions v ON v.rule=a.rule AND v.revision=a.revision")
 	if e != nil {
 		return nil, e
 	}
@@ -186,6 +186,9 @@ func (s *Store) RulePolicyVersion(ctx context.Context, id string, revision int64
 // New rule-family tables keep rollback to a pre-chain server compatible: older
 // binaries validate the native policy count and must still see exactly 10 rows.
 func policyTables(id string) (string, string) {
+	if id == "suricata.alert" {
+		return "correlation_sensor_policy_versions", "correlation_sensor_policy_active"
+	}
 	if id == "chain.kerberos_logon" || id == "chain.explicit_credentials_logon" {
 		return "correlation_windows_policy_versions", "correlation_windows_policy_active"
 	}
