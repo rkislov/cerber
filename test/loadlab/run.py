@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Isolated live-packet load/recovery lab. Run only through run.sh (network=none)."""
+"""Isolated live-packet load/recovery lab. Run only through launch.py (network=none)."""
 import datetime, hashlib, http.client, http.server, json, os, pathlib
 import socket, sqlite3, struct, subprocess, threading, time, traceback
 
