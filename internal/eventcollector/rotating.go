@@ -22,13 +22,13 @@ type rotationCursor struct {
 	Line string `json:"l"`
 }
 
-func (f RotatingLineFile) Read(ctx context.Context, cursor string) ([]telemetry.Raw, error) {
+func (f RotatingLineFile) openAtCursor(ctx context.Context, cursor string) (*os.File, int, rotationCursor, error) {
 	var saved rotationCursor
 	legacy := cursor != "" && !strings.HasPrefix(cursor, "r1.")
 	if cursor != "" && !legacy {
 		p, e := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(cursor, "r1."))
 		if e != nil || len(p) > 1024 || json.Unmarshal(p, &saved) != nil || saved.File == "" || saved.Line == "" {
-			return nil, telemetry.ErrInvalid
+			return nil, 0, saved, telemetry.ErrInvalid
 		}
 	}
 	if legacy {
@@ -38,30 +38,27 @@ func (f RotatingLineFile) Read(ctx context.Context, cursor string) ([]telemetry.
 	rank := 0
 	for n := 0; n <= 32; n++ {
 		if e := ctx.Err(); e != nil {
-			return nil, e
+			return nil, 0, saved, e
 		}
-		path := f.Path
-		if n > 0 {
-			path += "." + strconv.Itoa(n)
-		}
+		path := f.generationPath(n)
 		st, e := os.Lstat(path)
 		if os.IsNotExist(e) {
 			continue
 		}
 		if e != nil {
-			return nil, e
+			return nil, 0, saved, e
 		}
 		if !st.Mode().IsRegular() {
 			continue
 		}
 		v, e := os.Open(path)
 		if e != nil {
-			return nil, e
+			return nil, 0, saved, e
 		}
 		id, e := lineFileID(v)
 		if e != nil {
 			v.Close()
-			return nil, e
+			return nil, 0, saved, e
 		}
 		match := saved.File == id || cursor == "" && n == 0
 		if legacy {
@@ -76,7 +73,15 @@ func (f RotatingLineFile) Read(ctx context.Context, cursor string) ([]telemetry.
 		v.Close()
 	}
 	if file == nil {
-		return nil, fmt.Errorf("EVE file generation unavailable; cursor retained")
+		return nil, 0, saved, fmt.Errorf("EVE file generation unavailable; cursor retained")
+	}
+	return file, rank, saved, nil
+}
+
+func (f RotatingLineFile) Read(ctx context.Context, cursor string) ([]telemetry.Raw, error) {
+	file, rank, saved, e := f.openAtCursor(ctx, cursor)
+	if e != nil {
+		return nil, e
 	}
 	defer func() { file.Close() }()
 	for transitions := 0; transitions <= 32; transitions++ {
@@ -123,10 +128,7 @@ func (f RotatingLineFile) Read(ctx context.Context, cursor string) ([]telemetry.
 			return rows, nil
 		}
 		rank--
-		path := f.Path
-		if rank > 0 {
-			path += "." + strconv.Itoa(rank)
-		}
+		path := f.generationPath(rank)
 		info, e := os.Lstat(path)
 		if os.IsNotExist(e) {
 			return rows, nil
@@ -160,4 +162,48 @@ func (f RotatingLineFile) Read(ctx context.Context, cursor string) ([]telemetry.
 		saved.Line = ""
 	}
 	return nil, fmt.Errorf("EVE rotation limit; cursor retained")
+}
+
+// UnreadBytes measures the uncommitted tail, including partial lines and all
+// newer generations. A missing or changing generation makes the sample unknown.
+func (f RotatingLineFile) UnreadBytes(ctx context.Context, cursor string) (int64, error) {
+	file, rank, saved, err := f.openAtCursor(ctx, cursor)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	st, err := file.Stat()
+	if err != nil {
+		return 0, err
+	}
+	offset, _, _, err := linePosition(file, st.Size(), saved.Line)
+	if err != nil {
+		return 0, err
+	}
+	unread := st.Size() - offset
+	for newer := rank - 1; newer >= 0; newer-- {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		info, err := os.Lstat(f.generationPath(newer))
+		if err != nil {
+			return 0, err
+		}
+		if !info.Mode().IsRegular() {
+			return 0, fmt.Errorf("EVE successor is not a regular file")
+		}
+		unread += info.Size()
+	}
+	check, err := os.Lstat(f.generationPath(rank))
+	if err != nil || !os.SameFile(st, check) {
+		return 0, fmt.Errorf("EVE rotated during measurement")
+	}
+	return unread, nil
+}
+
+func (f RotatingLineFile) generationPath(rank int) string {
+	if rank == 0 {
+		return f.Path
+	}
+	return f.Path + "." + strconv.Itoa(rank)
 }

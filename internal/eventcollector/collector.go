@@ -251,6 +251,37 @@ type Sender interface {
 	SendEvents(context.Context, telemetry.Batch) (telemetry.Receipt, error)
 }
 
+// CollectPage reads from the durable cursor and returns records only after the
+// batch and its new cursor have been committed together.
+func CollectPage(ctx context.Context, spool Spool, agent string, source Source) (telemetry.SourceHealth, []telemetry.Raw, error) {
+	status := telemetry.SourceHealth{Source: source.Name(), State: "error", Code: "spool_error"}
+	cursor, err := spool.SourceCursor(ctx, agent, source.Name())
+	if err != nil {
+		return status, nil, err
+	}
+	records, err := source.Read(ctx, cursor)
+	if err != nil {
+		status.Code = "source_read_failed"
+		return status, nil, fmt.Errorf("%s: %w", source.Name(), err)
+	}
+	if len(records) > 0 {
+		var nonce [32]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return status, nil, err
+		}
+		batch := telemetry.Batch{SchemaVersion: 1, ID: hex.EncodeToString(nonce[:]), AgentID: agent, Records: records}
+		if err := spool.Enqueue(ctx, batch, source.Name(), cursor, records[len(records)-1].Cursor); err != nil {
+			if errors.Is(err, telemetry.ErrFull) {
+				status.State, status.Code = "blocked", "spool_full"
+			}
+			return status, nil, err
+		}
+	}
+	now := time.Now().UTC()
+	status.State, status.Code, status.LastReadAt = "ok", "", &now
+	return status, records, nil
+}
+
 func Cycle(ctx context.Context, spool Spool, sender Sender, agent string, sources []Source, onError func(error)) telemetry.CollectorHealth {
 	result := telemetry.CollectorHealth{Enabled: len(sources) > 0, ObservedAt: time.Now().UTC(), Delivery: "idle", Sources: []telemetry.SourceHealth{}}
 	flush := func() {
@@ -280,42 +311,10 @@ func Cycle(ctx context.Context, spool Spool, sender Sender, agent string, source
 	}
 	flush()
 	for _, source := range sources {
-		status := telemetry.SourceHealth{Source: source.Name(), State: "error", Code: "spool_error"}
-		collect := func() {
-			c, e := spool.SourceCursor(ctx, agent, source.Name())
-			if e != nil {
-				onError(e)
-				return
-			}
-			records, e := source.Read(ctx, c)
-			if e != nil {
-				status.Code = "source_read_failed"
-				onError(fmt.Errorf("%s: %w", source.Name(), e))
-				return
-			}
-			if len(records) > 0 {
-				b := telemetry.Batch{SchemaVersion: 1, AgentID: agent, Records: records}
-				var nonce [32]byte
-				if _, e = rand.Read(nonce[:]); e != nil {
-					onError(e)
-					return
-				}
-				b.ID = hex.EncodeToString(nonce[:])
-				if e = spool.Enqueue(ctx, b, source.Name(), c, records[len(records)-1].Cursor); e != nil {
-					if errors.Is(e, telemetry.ErrFull) {
-						status.State = "blocked"
-						status.Code = "spool_full"
-					}
-					onError(e)
-					return
-				}
-			}
-			status.State = "ok"
-			status.Code = ""
-			now := time.Now().UTC()
-			status.LastReadAt = &now
+		status, _, err := CollectPage(ctx, spool, agent, source)
+		if err != nil {
+			onError(err)
 		}
-		collect()
 		result.Sources = append(result.Sources, status)
 	}
 	flush()

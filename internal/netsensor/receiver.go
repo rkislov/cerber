@@ -15,6 +15,7 @@ import (
 	"github.com/rkislov/cerber/internal/suricatacapture"
 	rules "github.com/rkislov/cerber/internal/suricatarules"
 	"io"
+	"log"
 	"net"
 	"net/netip"
 	"os"
@@ -346,7 +347,8 @@ func (r *Receiver) serveUDP(ctx context.Context, c *net.UDPConn, i Input) error 
 	}
 }
 
-func Run(ctx context.Context, c Config, log io.Writer) error {
+func Run(ctx context.Context, c Config, out io.Writer) error {
+	logger := log.New(out, "", 0)
 	if e := c.Validate(); e != nil {
 		return e
 	}
@@ -384,8 +386,13 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 		}
 	}()
 	var workers []func() error
-	var files []eventcollector.Source
-	var fileMeters []*meteredFile
+	var files []meteredFile
+	queued := make(chan struct{}, 1)
+	onError := func(err error) {
+		if ctx.Err() == nil {
+			logger.Printf("sensor delivery/source: %v", err)
+		}
+	}
 	for _, input := range c.Inputs {
 		i := input
 		if sensorstate.Flow(i.Format) {
@@ -396,7 +403,7 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 			source := eventcollector.RotatingLineFile{LineFile: eventcollector.LineFile{Path: i.Path, Source: i.Source(), Identity: i.ID, Encode: func(line string) ([]byte, error) {
 				return json.Marshal(telemetry.SensorEnvelope{Input: i.ID, Peer: "local", Transport: "file", Profile: "suricata", Line: line})
 			}}}
-			var reader eventcollector.Source = source
+			var reader eveSource = source
 			if c.Capture != nil && i.Path == c.Capture.EVEPath {
 				engine := rules.NativeEngine{Config: *c.Suricata}
 				reader = eventcollector.ManagedEVE{RotatingLineFile: source, RotateBytes: suricatacapture.RotateBytes, Reopen: func(ctx context.Context) error {
@@ -406,9 +413,12 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 					return e
 				}}
 			}
-			meter := &meteredFile{Source: reader, input: i}
-			fileMeters = append(fileMeters, meter)
-			files = append(files, meter)
+			file := meteredFile{source: reader, input: i}
+			files = append(files, file)
+			workers = append(workers, func() error {
+				file.collect(ctx, r, queued, onError)
+				return nil
+			})
 			continue
 		}
 		if i.Protocol == "udp" {
@@ -457,7 +467,7 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 		}
 		// A cached managed bind may become unavailable after restart. Keep the
 		// control channel alive so an administrator can repair/remove it remotely.
-		fmt.Fprintln(log, "sensor cached flow listener could not be opened; waiting for policy repair")
+		logger.Println("sensor cached flow listener could not be opened; waiting for policy repair")
 	}
 	defer r.stopFlows()
 	var wg sync.WaitGroup
@@ -472,7 +482,7 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 		}()
 	}
 	defer func() { cancel(); wg.Wait() }()
-	fmt.Fprintln(log, "sensor started; passive inputs; bounded durable queue")
+	logger.Println("sensor started; passive inputs; bounded durable queue")
 	var ruleManager *rules.Manager
 	if c.Suricata != nil {
 		ruleManager = rules.NewManager(*c.Suricata, rules.NativeEngine{Config: *c.Suricata}, client.SuricataBundle)
@@ -483,23 +493,12 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 	var lastDelivery *time.Time
 	for {
 		cycleCtx, done := context.WithTimeout(ctx, 20*time.Second)
-		h := eventcollector.Cycle(cycleCtx, spool, client, credentials.AgentID, files, func(e error) {
-			if ctx.Err() == nil {
-				fmt.Fprintf(log, "sensor delivery/source: %v\n", e)
-			}
-		})
-		for _, f := range fileMeters {
-			f.commitMetrics(r, h.Sources)
-		}
+		h := eventcollector.Cycle(cycleCtx, spool, client, credentials.AgentID, nil, onError)
 		if h.LastDeliveryAt != nil {
 			lastDelivery = h.LastDeliveryAt
 		}
 		h.LastDeliveryAt = lastDelivery
 		r.mu.Lock()
-		for _, s := range h.Sources {
-			r.states[s.Source] = s
-		}
-		h.Sources = nil
 		for _, name := range []string{"network:syslog", "network:netflow", "network:suricata"} {
 			if s, ok := r.states[name]; ok {
 				h.Sources = append(h.Sources, s)
@@ -507,30 +506,15 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 		}
 		r.mu.Unlock()
 		h.Enabled = len(h.Sources) > 0
-		r.metricsMu.Lock()
-		for _, i := range c.Inputs {
-			if i.Protocol == "file" {
-				for _, sh := range h.Sources {
-					if sh.Source == i.Source() {
-						m := r.metrics[i.ID]
-						if sh.State == "ok" {
-							m.status.State = "listening"
-							if m.status.LastMessageAt != nil {
-								m.status.State = "receiving"
-							}
-						} else if sh.State == "error" || sh.State == "blocked" {
-							m.status.State = "error"
-							m.status.LastError = sh.Code
-							at := time.Now().UTC()
-							m.status.LastErrorAt = &at
-						}
+		if !time.Now().Before(nextHeartbeat) {
+			sensor := r.snapshot(c.Inputs)
+			for _, file := range files {
+				for i := range sensor.Inputs {
+					if sensor.Inputs[i].ID == file.input.ID {
+						sensor.Inputs[i].EVEUnreadBytes = file.unreadBytes(ctx, r)
 					}
 				}
 			}
-		}
-		r.metricsMu.Unlock()
-		if !time.Now().Before(nextHeartbeat) {
-			sensor := r.snapshot(c.Inputs)
 			if c.Capture != nil {
 				capture := suricatacapture.Probe(ctx, *c.Capture, (rules.NativeEngine{Config: *c.Suricata}).CaptureCommand)
 				sensor.Capture = &capture
@@ -549,17 +533,24 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 			}
 			if e == nil && receipt.SensorPolicy != nil {
 				if applyErr := r.applyPolicy(*receipt.SensorPolicy, true); applyErr != nil {
-					fmt.Fprintln(log, "sensor policy could not be applied")
+					logger.Println("sensor policy could not be applied")
 				}
 			}
 			if e != nil && ctx.Err() == nil {
-				fmt.Fprintf(log, "sensor heartbeat: %v\n", e)
+				logger.Printf("sensor heartbeat: %v\n", e)
 			}
-			fmt.Fprintf(log, "sensor counters received=%d stored_records=%d rejected=%d queue_batches=%d queue_bytes=%d delivery=%s\n", r.received.Load(), r.stored.Load(), r.rejected.Load(), h.QueueBatches, h.QueueBytes, h.Delivery)
-			fmt.Fprintf(log, "flow templates=%d unknown_sets=%d ignored_udp_withdrawals=%d resets=%d stale_packets=%d\n", r.flowTemplates.Load(), r.flowUnknown.Load(), r.flowWithdrawals.Load(), r.flowResets.Load(), r.flowStale.Load())
+			logger.Printf("sensor counters received=%d stored_records=%d rejected=%d queue_batches=%d queue_bytes=%d delivery=%s\n", r.received.Load(), r.stored.Load(), r.rejected.Load(), h.QueueBatches, h.QueueBytes, h.Delivery)
+			logger.Printf("flow templates=%d unknown_sets=%d ignored_udp_withdrawals=%d resets=%d stale_packets=%d\n", r.flowTemplates.Load(), r.flowUnknown.Load(), r.flowWithdrawals.Load(), r.flowResets.Load(), r.flowStale.Load())
 			nextHeartbeat = time.Now().Add(time.Minute)
 		}
 		done()
+		if ctx.Err() == nil && h.Delivery == "ok" && h.QueueBatches > 0 {
+			continue
+		}
+		wake := queued
+		if h.Delivery == "error" {
+			wake = nil // A new file page must not defeat the delivery retry interval.
+		}
 		t := time.NewTimer(time.Second)
 		select {
 		case e := <-errCh:
@@ -573,6 +564,8 @@ func Run(ctx context.Context, c Config, log io.Writer) error {
 			default:
 				return nil
 			}
+		case <-wake:
+			t.Stop()
 		case <-t.C:
 		}
 	}

@@ -58,6 +58,7 @@ type Exporter struct {
 	Counters Counters  `json:"counters"`
 }
 type Input struct {
+	EVEUnreadBytes     *int64     `json:"eve_unread_bytes,omitempty"`
 	ID                 string     `json:"id"`
 	Format             string     `json:"format"`
 	Protocol           string     `json:"protocol"`
@@ -331,6 +332,9 @@ func (s Status) Validate() error {
 	seen := map[string]bool{}
 	for _, i := range s.Inputs {
 		if !telemetry.AgentIdentifier(i.ID) || seen[i.ID] || len(i.Exporters) > 8 || !ValidCode(i.LastError) {
+			return ErrInvalid
+		}
+		if i.EVEUnreadBytes != nil && (i.Protocol != "file" || i.Format != "suricata" || *i.EVEUnreadBytes < 0) {
 			return ErrInvalid
 		}
 		seen[i.ID] = true

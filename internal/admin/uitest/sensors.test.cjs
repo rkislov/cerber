@@ -10,3 +10,19 @@ test('create IPv6 listener from the form with explicit format, port and host all
 test('delete uses tombstones for local inputs, drops central definitions and preserves adjacent settings',async()=>{const {ctx,requests}=setup();ctx.confirm=()=>true;ctx.item=managedFixture();ctx.item.policy.inputs=[{id:'created',format:'ipfix',listen:'127.0.0.1:14739',allow:['127.0.0.1/32'],enabled:true}];await ctx.deleteSensorInput(ctx.item,ctx.item.agent.health.sensor.inputs[0]);assert.equal(requests[0].body.inputs.length,2);assert.equal(requests[0].body.inputs[1].removed,true);requests.length=0;await ctx.deleteSensorInput(ctx.item,ctx.item.policy.inputs[0]);assert.equal(requests[0].body.inputs.length,0);requests.length=0;ctx.confirm=()=>false;await ctx.deleteSensorInput(ctx.item,ctx.item.policy.inputs[0]);assert.equal(requests.length,0)});
 test('failed pending creation stays editable and duplicate IDs are blocked before saving',async()=>{const {ctx,$,requests}=setup();ctx.item=managedFixture();ctx.item.policy.inputs=[{id:'pending',format:'netflow9',listen:'127.0.0.1:19999',allow:['127.0.0.1/32'],enabled:true,template_ttl_seconds:300}];ctx.item.agent.health.sensor.config_error='policy_bind_failed';ctx.item.agent.health.sensor.config_error_input='pending';assert.match(ctx.sensorPolicyState(ctx.item),/pending/);vm.runInContext('editSensorInput(item,item.policy.inputs[0])',ctx);$('sensor-input-port').value='20000';await ctx.saveSensorInput();assert.equal(requests[0].body.inputs[0].listen,'127.0.0.1:20000');requests.length=0;vm.runInContext('editSensorInput(item)',ctx);$('sensor-input-id').value='ipfix';$('sensor-input-allow').value='127.0.0.1';await ctx.saveSensorInput();assert.equal(requests.length,0);assert.match($('sensor-save-error').textContent,/уже используется/)});
 test('sFlow form respects capability and omits template TTL',async()=>{const {ctx,$,requests}=setup();ctx.item=managedFixture();vm.runInContext('editSensorInput(item)',ctx);assert.equal($('sensor-format-sflow').disabled,true);ctx.item.agent.health.sensor.sflow_version=1;vm.runInContext('editSensorInput(item)',ctx);assert.equal($('sensor-format-sflow').disabled,false);$('sensor-input-id').value='sflow';$('sensor-input-format').value='sflow5';ctx.updateSensorFormat();assert.equal($('sensor-input-ttl').disabled,true);$('sensor-input-port').value='6343';$('sensor-input-allow').value='192.0.2.10';await ctx.saveSensorInput();const c=requests.find(v=>v.body).body.inputs[0];assert.equal(c.format,'sflow5');assert.equal(c.template_ttl_seconds,0)});
+
+test('EVE unread bytes are independent of delivery and missing metrics remain unknown', () => {
+  const {ctx, $} = setup();
+  const item = fixture();
+  const input = {id:'eve', format:'suricata', protocol:'file', enabled:true, counters:{stored:12}};
+  item.agent.health.sensor.inputs = [input];
+  item.agent.health.events = {queue_known:true, queue_batches:0, queue_bytes:0, delivery:'idle'};
+  for (const [size, expected] of [[4096,'4 КиБ'],[0,'0 Б'],[undefined,'Нет замера']]) {
+    input.eve_unread_bytes = size;
+    ctx.renderSensorDetail(item);
+    const metrics = $('sensor-delivery').children;
+    assert.equal(metrics[0].textContent, 'Непрочитано в EVE');
+    assert.equal(metrics[0].children[0].textContent, expected);
+    assert.equal(metrics[1].children[0].textContent, '0 пакетов · 0 Б');
+  }
+});

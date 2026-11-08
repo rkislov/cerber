@@ -4,45 +4,83 @@ package netsensor
 import (
 	"context"
 	"encoding/json"
-	"github.com/rkislov/cerber/internal/eventcollector"
-	"github.com/rkislov/cerber/internal/telemetry"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/rkislov/cerber/internal/eventcollector"
+	"github.com/rkislov/cerber/internal/eventstore"
+	"github.com/rkislov/cerber/internal/telemetry"
 )
 
-func TestFileMetricsOnlyCountCommittedRecords(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "eve.json")
-	os.WriteFile(p, []byte("one\ntwo\n"), 0600)
-	i := Input{ID: "eve", Format: "suricata", Protocol: "file", Path: p}
-	r := newReceiver(nil, "agent")
-	r.configure(Config{Inputs: []Input{i}, Spool: filepath.Join(t.TempDir(), "queue.db")})
-	f := &meteredFile{input: i, Source: eventcollector.RotatingLineFile{LineFile: eventcollector.LineFile{Path: p, Source: i.Source(), Identity: i.ID, Encode: func(s string) ([]byte, error) { return json.Marshal(s) }}}}
-	rows, e := f.Read(context.Background(), "")
-	if e != nil || len(rows) != 2 {
-		t.Fatal(rows, e)
+type blockedFileQueue struct{ eventcollector.Spool }
+
+func (blockedFileQueue) Enqueue(context.Context, telemetry.Batch, string, string, string) error {
+	return telemetry.ErrFull
+}
+
+func TestFileLagFollowsDurableCursorAcrossBackpressureAndRotation(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "eve.json")
+	write := func(path, contents string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	f.commitMetrics(r, []telemetry.SourceHealth{{Source: i.Source(), State: "blocked"}})
-	s := r.snapshot([]Input{i})
-	if s.Inputs[0].Counters.Stored != 0 || s.Inputs[0].LastMessageAt != nil {
-		t.Fatal("uncommitted read counted", s)
+	input := Input{ID: "eve", Format: "suricata", Protocol: "file", Path: path}
+	queue, err := eventstore.Open(ctx, filepath.Join(dir, "queue.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	rows, e = f.Read(context.Background(), "")
-	if e != nil {
-		t.Fatal(e)
+	defer queue.Close()
+	r := newReceiver(blockedFileQueue{queue}, "agent")
+	if err := r.configure(Config{Inputs: []Input{input}, Spool: filepath.Join(dir, "queue.db")}); err != nil {
+		t.Fatal(err)
 	}
-	f.commitMetrics(r, []telemetry.SourceHealth{{Source: i.Source(), State: "ok"}})
-	s = r.snapshot([]Input{i})
-	if s.Inputs[0].Counters.Stored != 2 || s.Inputs[0].Counters.Messages != 2 || s.Inputs[0].LastMessageAt == nil {
-		t.Fatal(s)
+	f := meteredFile{input: input, source: eventcollector.RotatingLineFile{LineFile: eventcollector.LineFile{
+		Path: path, Source: input.Source(), Identity: input.ID,
+		Encode: func(s string) ([]byte, error) { return json.Marshal(s) },
+	}}}
+	stored := func() uint64 { return r.snapshot([]Input{input}).Inputs[0].Counters.Stored }
+	expectLag := func(n int64) {
+		t.Helper()
+		if size := f.unreadBytes(ctx, r); size == nil || *size != n {
+			t.Fatalf("expected %d unread bytes, got %v", n, size)
+		}
 	}
-	last := *s.Inputs[0].LastMessageAt
-	if _, e = f.Read(context.Background(), rows[1].Cursor); e != nil {
-		t.Fatal(e)
+	page := func() telemetry.SourceHealth {
+		t.Helper()
+		state, records, _ := eventcollector.CollectPage(ctx, r.spool, r.agent, f.source)
+		f.recordPage(r, state, records)
+		return state
 	}
-	f.commitMetrics(r, []telemetry.SourceHealth{{Source: i.Source(), State: "ok"}})
-	s = r.snapshot([]Input{i})
-	if s.Inputs[0].Counters.Stored != 2 || !s.Inputs[0].LastMessageAt.Equal(last) {
-		t.Fatal("empty read counted", s)
+	contents := strings.Repeat("one\n", telemetry.MaxRecords+1)
+	write(path, contents)
+	if state := page(); state.State != "blocked" || stored() != 0 {
+		t.Fatal("uncommitted read counted", state)
+	}
+	expectLag(int64(len(contents)))
+	r.spool = queue
+	if state := page(); state.State != "ok" || stored() != telemetry.MaxRecords {
+		t.Fatal("first committed page", state, stored())
+	}
+	expectLag(4)
+	if err := os.Rename(path, path+".1"); err != nil {
+		t.Fatal(err)
+	}
+	write(path, "two\npartial")
+	expectLag(15)
+	if state := page(); state.State != "ok" || stored() != telemetry.MaxRecords+1 {
+		t.Fatal("rotated tail", state)
+	}
+	expectLag(11)
+	if err := os.Remove(path + ".1"); err != nil {
+		t.Fatal(err)
+	}
+	if f.unreadBytes(ctx, r) != nil {
+		t.Fatal("lost generation reported as caught up")
 	}
 }

@@ -55,34 +55,9 @@ func (f LineFile) readOpen(ctx context.Context, cursor string, file *os.File) ([
 	if !st.Mode().IsRegular() {
 		return nil, fmt.Errorf("Line source must be a regular append-only file")
 	}
-	var offset int64
-	var prefixLen int
-	fingerprint := ""
-	if cursor != "" {
-		p := strings.Split(cursor, ":")
-		if len(p) != 3 {
-			return nil, telemetry.ErrInvalid
-		}
-		offset, e = strconv.ParseInt(p[0], 10, 64)
-		if e != nil || offset < 1 {
-			return nil, telemetry.ErrInvalid
-		}
-		prefixLen, e = strconv.Atoi(p[1])
-		if e != nil || prefixLen < 1 || prefixLen > 1024 || int64(prefixLen) > offset {
-			return nil, telemetry.ErrInvalid
-		}
-		fingerprint = p[2]
-		prefix := make([]byte, prefixLen)
-		if _, e = file.ReadAt(prefix, 0); e != nil {
-			return nil, fmt.Errorf("Line spool truncated; cursor retained")
-		}
-		sum := sha256.Sum256(prefix)
-		if hex.EncodeToString(sum[:]) != fingerprint {
-			return nil, fmt.Errorf("Line spool replaced; cursor retained")
-		}
-	}
-	if st.Size() < offset {
-		return nil, fmt.Errorf("Line spool truncated; cursor retained")
+	offset, prefixLen, fingerprint, e := linePosition(file, st.Size(), cursor)
+	if e != nil {
+		return nil, e
 	}
 	if _, e = file.Seek(offset, io.SeekStart); e != nil {
 		return nil, e
@@ -128,4 +103,38 @@ func (f LineFile) readOpen(ctx context.Context, cursor string, file *os.File) ([
 		result = append(result, telemetry.Raw{ID: telemetry.ID(f.Path, f.Identity, next, text), Source: f.Name(), Cursor: next, ObservedAt: time.Now().UTC(), Data: data})
 	}
 	return result, nil
+}
+
+func linePosition(file *os.File, size int64, cursor string) (int64, int, string, error) {
+	var offset int64
+	var prefixLen int
+	fingerprint := ""
+	if cursor != "" {
+		p := strings.Split(cursor, ":")
+		if len(p) != 3 {
+			return 0, 0, "", telemetry.ErrInvalid
+		}
+		var e error
+		offset, e = strconv.ParseInt(p[0], 10, 64)
+		if e != nil || offset < 1 {
+			return 0, 0, "", telemetry.ErrInvalid
+		}
+		prefixLen, e = strconv.Atoi(p[1])
+		if e != nil || prefixLen < 1 || prefixLen > 1024 || int64(prefixLen) > offset {
+			return 0, 0, "", telemetry.ErrInvalid
+		}
+		fingerprint = p[2]
+		prefix := make([]byte, prefixLen)
+		if _, e = file.ReadAt(prefix, 0); e != nil {
+			return 0, 0, "", fmt.Errorf("Line spool truncated; cursor retained")
+		}
+		sum := sha256.Sum256(prefix)
+		if hex.EncodeToString(sum[:]) != fingerprint {
+			return 0, 0, "", fmt.Errorf("Line spool replaced; cursor retained")
+		}
+	}
+	if size < offset {
+		return 0, 0, "", fmt.Errorf("Line spool truncated; cursor retained")
+	}
+	return offset, prefixLen, fingerprint, nil
 }

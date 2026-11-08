@@ -256,6 +256,17 @@ def run():
     db.close()
     assert not list((ROOT/'state').glob('*.runtime.db')) and not list((ROOT/'state').glob('*endpoint*'))
     RESULT.update({'status':'passed','packets_sent':len(SENT),'eve_records':len(EVE),'counts':counts,'proxy_faults':dict(PROXY),'sample_errors':ERRORS,'final_queue_batches':SAMPLES[-1]['queue_batches'],'finished_at':datetime.datetime.now(datetime.timezone.utc).isoformat()})
+    control = connect('control.db')
+    try:
+        stored = control.execute('SELECT payload FROM agent_heartbeats WHERE agent_id=?', ('loadlab-sensor',)).fetchone()
+        heartbeat = json.loads(stored[0])
+        eve_input = next(i for i in heartbeat['sensor']['inputs'] if i['protocol'] == 'file')
+        unread = eve_input.get('eve_unread_bytes')
+        assert isinstance(unread, int) and unread >= 0, 'missing EVE lag in accepted heartbeat'
+        RESULT['sensor_heartbeat'] = {'observed_at': heartbeat['observed_at'], 'eve_unread_bytes': unread,
+                                      'queue_bytes': heartbeat['events']['queue_bytes'], 'queue_batches': heartbeat['events']['queue_batches']}
+    finally:
+        control.close()
     save('sent.json',SENT)
     content=(ROOT/'eve/eve.json').read_bytes()
     assert len(content.splitlines())==len(EVE),'duplicate EVE records'
