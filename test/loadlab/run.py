@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Isolated live-packet load/recovery lab. Run only through launch.py (network=none)."""
-import datetime, hashlib, http.client, http.server, json, os, pathlib
+import argparse, datetime, hashlib, http.client, http.server, json, os, pathlib
 import socket, sqlite3, struct, subprocess, threading, time, traceback
 
 ROOT = pathlib.Path('/lab')
@@ -197,7 +197,30 @@ def summary(name,ids,begin,send_elapsed,rate,recovery_at=None):
     RESULT['phases'].append(metrics);save('result.json',RESULT);mark(json.dumps(metrics))
     assert all(metrics[k]==0 for k in ['missing_alerts','missing_normalized','missing_detections']),metrics
 
-def run():
+def load_and_recovery():
+    global PHASE
+    for rate in [50,200,800]:
+        PHASE='steady_'+str(rate);begin=time.time();ids,elapsed=send(rate,8)
+        wait(lambda:done(ids),'steady completion '+str(rate));summary(PHASE,ids,begin,elapsed,rate)
+    PHASE='connection_loss_and_sensor_crash';begin=time.time();PROXY['blocked']=True
+    ids,elapsed=send(100,8);wait(lambda:SAMPLES[-1].get('queue_batches',0)>0,'persisted outage queue',30)
+    before=SAMPLES[-1]['queue_batches'];stop('sensor',True);sensor();time.sleep(3)
+    assert PROXY['rejected']>0
+    recovery=time.time();PROXY['blocked']=False
+    wait(lambda:done(ids),'recovery after link and sensor crash');summary(PHASE,ids,begin,elapsed,100,recovery)
+    RESULT['outage_queue_before_sensor_crash']=before
+    PHASE='siem_crash';begin=time.time();stop('siem',True)
+    ids,elapsed=send(100,8);server();wait(ready,'restarted SIEM',60);recovery=time.time()
+    wait(lambda:done(ids),'server crash recovery');summary(PHASE,ids,begin,elapsed,100,recovery)
+    PHASE='lost_ack';begin=time.time();PROXY['drop_ack']=1
+    ids,elapsed=send(50,4);wait(lambda:done(ids) and PROXY['acks_dropped']==1,'lost ACK and retry')
+    wait(lambda:SAMPLES[-1].get('queue_batches',1)==0,'ACK retry queue drained');summary(PHASE,ids,begin,elapsed,50)
+    # Flush flow records before an idle engine restart. No claim of capturing
+    # packets while the capture process is stopped.
+    PHASE='suricata_restart';stop('suricata');engine();time.sleep(12)
+    begin=time.time();ids,elapsed=send(50,4);wait(lambda:done(ids),'capture after engine restart');summary(PHASE,ids,begin,elapsed,50)
+
+def run(sustained):
     global PHASE
     # Refuse attached networking and non-empty state (no chance of running on a live SIEM).
     links=json.loads(subprocess.check_output(['ip','-j','address','show'],text=True))
@@ -226,26 +249,14 @@ def run():
     threading.Thread(target=sample,daemon=True).start()
     wait(lambda:'Engine started' in (OUT/'suricata.log').read_text(),'Suricata ready',120)
     RESULT['ruleset_stats']=json.loads(subprocess.check_output(['suricatasc','/lab/rules/suricata.socket','-c','ruleset-stats'],text=True,timeout=5))
-    for rate in [50,200,800]:
-        PHASE='steady_'+str(rate);begin=time.time();ids,elapsed=send(rate,8)
-        wait(lambda:done(ids),'steady completion '+str(rate));summary(PHASE,ids,begin,elapsed,rate)
-    PHASE='connection_loss_and_sensor_crash';begin=time.time();PROXY['blocked']=True
-    ids,elapsed=send(100,8);wait(lambda:SAMPLES[-1].get('queue_batches',0)>0,'persisted outage queue',30)
-    before=SAMPLES[-1]['queue_batches'];stop('sensor',True);sensor();time.sleep(3)
-    assert PROXY['rejected']>0
-    recovery=time.time();PROXY['blocked']=False
-    wait(lambda:done(ids),'recovery after link and sensor crash');summary(PHASE,ids,begin,elapsed,100,recovery)
-    RESULT['outage_queue_before_sensor_crash']=before
-    PHASE='siem_crash';begin=time.time();stop('siem',True)
-    ids,elapsed=send(100,8);server();wait(ready,'restarted SIEM',60);recovery=time.time()
-    wait(lambda:done(ids),'server crash recovery');summary(PHASE,ids,begin,elapsed,100,recovery)
-    PHASE='lost_ack';begin=time.time();PROXY['drop_ack']=1
-    ids,elapsed=send(50,4);wait(lambda:done(ids) and PROXY['acks_dropped']==1,'lost ACK and retry')
-    wait(lambda:SAMPLES[-1].get('queue_batches',1)==0,'ACK retry queue drained');summary(PHASE,ids,begin,elapsed,50)
-    # Flush flow records before an idle engine restart. No claim of capturing
-    # packets while the capture process is stopped.
-    PHASE='suricata_restart';stop('suricata');engine();time.sleep(12)
-    begin=time.time();ids,elapsed=send(50,4);wait(lambda:done(ids),'capture after engine restart');summary(PHASE,ids,begin,elapsed,50)
+    if sustained:
+        PHASE = 'steady_100_sustained'
+        begin = time.time()
+        ids, elapsed = send(100, 600)
+        wait(lambda: done(ids), 'sustained series complete')
+        summary(PHASE, ids, begin, elapsed, 100)
+    else:
+        load_and_recovery()
     stop('suricata');wait(lambda:sum(v['event_type']=='flow' for _,v in list(EVE.values()))==len(SENT),'flow flush',60)
     wait(lambda:len(NORMAL)==len(EVE) and SAMPLES[-1].get('queue_batches',1)==0 and SAMPLES[-1].get('pending_correlation',1)==0,'final full drain',360)
     time.sleep(3)
@@ -267,6 +278,15 @@ def run():
                                       'queue_bytes': heartbeat['events']['queue_bytes'], 'queue_batches': heartbeat['events']['queue_batches']}
     finally:
         control.close()
+    integrity = {}
+    for name in ['control.db', 'events.db', 'queue.db']:
+        db = connect(name)
+        try:
+            integrity[name] = [row[0] for row in db.execute('PRAGMA quick_check')]
+        finally:
+            db.close()
+    save('integrity.json', integrity)
+    assert all(rows == ['ok'] for rows in integrity.values()), integrity
     save('sent.json',SENT)
     content=(ROOT/'eve/eve.json').read_bytes()
     assert len(content.splitlines())==len(EVE),'duplicate EVE records'
@@ -275,7 +295,10 @@ def run():
     save('result.json',RESULT);mark('LOAD_AND_RECOVERY_VERIFIED')
 
 if __name__=='__main__':
-    try:run()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--sustained', action='store_true', help='Run a ten-minute series at 100 packets/s')
+    args = parser.parse_args()
+    try:run(args.sustained)
     except Exception:
         OUT.mkdir(parents=True,exist_ok=True);RESULT['status']='failed';RESULT['error']=traceback.format_exc();save('result.json',RESULT);raise
     finally:
