@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """Build native binaries, run in a fresh disconnected Docker namespace, export evidence."""
+from contextlib import ExitStack
 import argparse, datetime, hashlib, json, os, pathlib, shutil, subprocess, uuid
 
 def run(*args, **kwargs):
@@ -11,7 +12,12 @@ def main():
     parser.add_argument('--rules',required=True,type=pathlib.Path,help='Local ET Open .rules snapshot (never downloaded by the runtime)')
     parser.add_argument('--output',required=True,type=pathlib.Path,help='New local output directory; contains synthetic packet captures and metrics')
     parser.add_argument('--sustained', action='store_true', help='Run a ten-minute series at 100 packets/s instead of the short recovery profile')
-    args=parser.parse_args();repo=pathlib.Path(__file__).resolve().parents[2]
+    parser.add_argument('--capture', choices=['af-packet','af-xdp'], default='af-packet', help='Capture backend on the isolated veth')
+    parser.add_argument('--xdp-sys-admin', action='store_true', help='Allow SYS_ADMIN in the AF_XDP test container for kernels that restrict BPF object lookup')
+    args=parser.parse_args()
+    if args.xdp_sys_admin and args.capture != 'af-xdp':
+        parser.error('--xdp-sys-admin requires --capture af-xdp')
+    repo=pathlib.Path(__file__).resolve().parents[2]
     rules=args.rules.resolve();out=args.output.resolve()
     if not rules.is_file() or out.exists():parser.error('rules must exist and output must be a new directory')
     info=json.loads(subprocess.check_output(['docker','info','--format','{{json .}}'],text=True))
@@ -25,23 +31,48 @@ def main():
     for name,source in [('cerber','./cmd/cerber'),('cerber-sensor','./cmd/cerber-sensor'),('seed','./test/loadlab/seed')]:
         run('go','build','-trimpath','-o',str(build/name),source,cwd=repo,env=env)
     name='cerber-loadlab-'+uuid.uuid4().hex[:12];volume=name;image=name+':local'
-    manifest={'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),'architecture':arch,'docker_cpus':info['NCPU'],'docker_memory_bytes':info['MemTotal'],'container_cpus':4,'container_memory_bytes':4*1024**3,'rules_sha256':hashlib.sha256(rules.read_bytes()).hexdigest(),'sustained':args.sustained,'network':'none','capabilities':['NET_ADMIN','NET_RAW'],'binaries':{n:hashlib.sha256((build/n).read_bytes()).hexdigest() for n in ['cerber','cerber-sensor','seed']}}
+    capabilities = ['NET_ADMIN','NET_RAW']
+    if args.capture == 'af-xdp':
+        capabilities.extend(['BPF','PERFMON'])
+    if args.xdp_sys_admin:
+        capabilities.append('SYS_ADMIN')
+    manifest={'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),'architecture':arch,'docker_cpus':info['NCPU'],'docker_memory_bytes':info['MemTotal'],'container_cpus':4,'container_memory_bytes':4*1024**3,'rules_sha256':hashlib.sha256(rules.read_bytes()).hexdigest(),'sustained':args.sustained,'network':'none','capabilities':capabilities,'capture_backend':args.capture,'binaries':{n:hashlib.sha256((build/n).read_bytes()).hexdigest() for n in ['cerber','cerber-sensor','seed']}}
     (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     with (out/'build.log').open('w') as log:run('docker','build','-t',image,str(build),stdout=log,stderr=subprocess.STDOUT)
-    run('docker','volume','create',volume,stdout=subprocess.DEVNULL)
-    try:
+    with ExitStack() as cleanup:
+        cleanup.callback(run, 'docker','image','rm',image, stdout=subprocess.DEVNULL)
+        run('docker','volume','create',volume,stdout=subprocess.DEVNULL)
+        cleanup.callback(run, 'docker','volume','rm',volume, stdout=subprocess.DEVNULL)
+        opts = ['--name',name,'--network','none','--cap-drop','ALL','--read-only',
+                '--memory','4g','--cpus','4','--pids-limit','128',
+                '--tmpfs','/tmp:rw,noexec,nosuid,size=64m','--tmpfs','/run:rw,noexec,nosuid,size=16m',
+                '--mount','type=volume,src='+volume+',dst=/lab',
+                '--mount','type=bind,src='+str(inputs)+',dst=/input,readonly',
+                '--mount','type=bind,src='+str(repo/'test/loadlab')+',dst=/scripts,readonly']
+        for cap in capabilities:
+            opts.extend(['--cap-add',cap])
+        if args.capture == 'af-xdp':
+            bpffs = name+'-bpf'
+            run('docker','volume','create','--driver','local','--opt','type=bpf','--opt','device=bpf',bpffs,stdout=subprocess.DEVNULL)
+            cleanup.callback(run, 'docker','volume','rm',bpffs, stdout=subprocess.DEVNULL)
+            opts.extend(['--mount','type=volume,src='+bpffs+',dst=/sys/fs/bpf,volume-nocopy','--ulimit','memlock=-1'])
+        cleanup.callback(subprocess.run,['docker','rm','-f',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        command = ['docker','run',*opts,image,'python3','/scripts/run.py','--capture',args.capture]
+        if args.sustained:
+            command.append('--sustained')
         with (out/'run.log').open('w') as log:
-            completed=subprocess.run(['docker','run','--name',name,'--network','none','--cap-drop','ALL','--cap-add','NET_ADMIN','--cap-add','NET_RAW','--read-only','--memory','4g','--cpus','4','--pids-limit','128','--tmpfs','/tmp:rw,noexec,nosuid,size=64m','--tmpfs','/run:rw,noexec,nosuid,size=16m','--mount','type=volume,src='+volume+',dst=/lab','--mount','type=bind,src='+str(inputs)+',dst=/input,readonly','--mount','type=bind,src='+str(repo/'test/loadlab')+',dst=/scripts,readonly',image,'python3','/scripts/run.py'] + (['--sustained'] if args.sustained else []),stdout=log,stderr=subprocess.STDOUT,timeout=1200)
-        if completed.returncode:raise RuntimeError('Lab failed; inspect run.log and evidence/result.json')
-    finally:
-        subprocess.run(['docker','stop','-t','30',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        inspection=subprocess.run(['docker','inspect',name],capture_output=True,text=True)
-        if inspection.returncode==0:
-            (out/'container.json').write_text(inspection.stdout)
-            run('docker','cp',name+':/lab/evidence',str(out/'evidence'))
-            run('docker','rm',name,stdout=subprocess.DEVNULL)
-        run('docker','volume','rm',volume,stdout=subprocess.DEVNULL)
-        run('docker','image','rm',image,stdout=subprocess.DEVNULL)
+            try:
+                completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=1200)
+            finally:
+                subprocess.run(['docker','stop','-t','30',name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                inspection = subprocess.run(['docker','inspect',name], capture_output=True, text=True)
+                if inspection.returncode == 0:
+                    (out/'container.json').write_text(inspection.stdout)
+                    exported = subprocess.run(['docker','cp',name+':/lab/evidence',str(out/'evidence')], stdout=log, stderr=log)
+                    if exported.returncode:
+                        raise RuntimeError('Could not export evidence; inspect run.log')
+            if completed.returncode:
+                raise RuntimeError('Lab failed; inspect run.log and evidence/suricata.log')
     print('Evidence:',out/'evidence/result.json')
 
 if __name__=='__main__':main()

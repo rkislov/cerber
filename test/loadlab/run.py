@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Isolated live-packet load/recovery lab. Run only through launch.py (network=none)."""
 import argparse, datetime, hashlib, http.client, http.server, json, os, pathlib
-import socket, sqlite3, struct, subprocess, threading, time, traceback
+import re, socket, sqlite3, struct, subprocess, threading, time, traceback
 
 ROOT = pathlib.Path('/lab')
 OUT = ROOT/'evidence'
@@ -43,7 +43,28 @@ def sensor():
     return start('sensor', ['cerber-sensor', '-config', '/lab/state/sensor.json'])
 
 def engine():
-    return start('suricata', ['suricata', '--runmode', 'single', '--init-errors-fatal', '-c', '/lab/state/suricata.yaml', '--af-packet=cerber-span', '-F', '/lab/filter.bpf', '-l', '/lab/eve'])
+    log = OUT/'suricata.log'
+    offset = log.stat().st_size if log.exists() else 0
+    capture = ['--af-packet=cerber-span', '-F', '/lab/filter.bpf']
+    if RESULT['capture_backend'] == 'af-xdp':
+        capture = ['--af-xdp=cerber-span']
+    process = start('suricata', ['suricata', '--runmode', 'single', '--init-errors-fatal',
+                    '-c', '/lab/state/suricata.yaml', *capture, '-l', '/lab/eve'])
+    return process, offset
+
+def wait_engine(process, offset):
+    def started():
+        if process.poll() is not None:
+            raise RuntimeError('Suricata exited during startup; see evidence/suricata.log')
+        with (OUT/'suricata.log').open('rb') as log:
+            log.seek(offset)
+            return b'Engine started' in log.read()
+    wait(started, 'Suricata ready', 120)
+    if RESULT['capture_backend'] == 'af-xdp':
+        link = json.loads(subprocess.check_output(['ip', '-j', '-d', 'link', 'show', 'dev', 'cerber-span']))[0]
+        attached = link.get('xdp', {})
+        assert attached.get('mode') == 2 and attached.get('prog', {}).get('id'), 'No generic XDP program on test veth'
+        RESULT.setdefault('xdp_attachments', []).append(attached)
 
 def wait(fn, label, timeout=360):
     end = time.monotonic()+timeout
@@ -110,7 +131,7 @@ def sample():
                         line=f.readline()
                         if not line.endswith('\n'):break
                         eve_pos=f.tell();v=json.loads(line)
-                        EVE[(v['event_type'],str(v.get('flow_id')),v.get('alert',{}).get('signature_id'))]=(at,v)
+                        EVE[(v['event_type'],str(v.get('flow_id')),v.get('alert',{}).get('signature_id'))]=(time.time(),v)
             db=connect('events.db')
             if db:
                 for table,target in [('normalized_events',NORMAL),('detections',DETECTIONS)]:
@@ -186,6 +207,9 @@ def summary(name,ids,begin,send_elapsed,rate,recovery_at=None):
     lat=[(det[ip][0]-SENT[ip]['at'])*1000 for ip in det]
     ing=[(datetime.datetime.fromisoformat(v['received_at'].replace('Z','+00:00')).timestamp()-SENT[ip]['at'])*1000 for ip,(_,v) in event.items()]
     metrics={'phase':name,'packets_sent':len(ids),'target_pps':rate,'actual_pps':len(ids)/send_elapsed,'eve_alerts':len(alerts),'normalized_alerts':len(event),'detections':len(det),'missing_alerts':len(wanted-alerts),'missing_normalized':len(wanted-set(event)),'missing_detections':len(wanted-set(det)), 'latency_ms':{'ingest_p50':percentile(ing,.5),'ingest_p95':percentile(ing,.95),'correlation_observed_p50':percentile(lat,.5),'correlation_observed_p95':percentile(lat,.95),'correlation_observed_p99':percentile(lat,.99),'correlation_observed_max':max(lat,default=0)},'peak':{key:max((r.get(key,0) for r in rows),default=0) for key in ['queue_batches','queue_bytes','queue_records','source_backlog_records','pending_normalization','pending_correlation']},'resources':{},'seconds_until_complete':time.time()-begin}
+    eve_latency = [(observed-SENT[row['src_ip']]['at'])*1000 for observed,row in list(EVE.values())
+                   if row.get('alert',{}).get('signature_id')==SID and row.get('src_ip') in wanted]
+    metrics['latency_ms']['eve_observed_p95'] = percentile(eve_latency, .95)
     if recovery_at:metrics['drain_after_recovery_seconds']=time.time()-recovery_at
     for process in ['suricata','sensor','siem']:
         records=[r['processes'][process] for r in rows if process in r['processes']]
@@ -217,16 +241,18 @@ def load_and_recovery():
     wait(lambda:SAMPLES[-1].get('queue_batches',1)==0,'ACK retry queue drained');summary(PHASE,ids,begin,elapsed,50)
     # Flush flow records before an idle engine restart. No claim of capturing
     # packets while the capture process is stopped.
-    PHASE='suricata_restart';stop('suricata');engine();time.sleep(12)
+    PHASE='suricata_restart';stop('suricata');wait_engine(*engine())
     begin=time.time();ids,elapsed=send(50,4);wait(lambda:done(ids),'capture after engine restart');summary(PHASE,ids,begin,elapsed,50)
 
-def run(sustained):
+def run(sustained, capture_backend):
     global PHASE
     # Refuse attached networking and non-empty state (no chance of running on a live SIEM).
     links=json.loads(subprocess.check_output(['ip','-j','address','show'],text=True))
     assert all(i['ifname']=='lo' or ('UP' not in i['flags'] and not i.get('addr_info')) for i in links),'requires disconnected Docker network namespace'
     assert not (ROOT/'state').exists(),'requires a fresh lab volume'
     OUT.mkdir(parents=True,exist_ok=True);(ROOT/'rules').mkdir();(ROOT/'eve').mkdir()
+    RESULT['capture_backend'] = capture_backend
+    RESULT['kernel'] = os.uname().release
     rules=pathlib.Path('/input/active.rules').read_bytes()
     assert b'sid:9900001;' not in rules
     (ROOT/'rules/active.rules').write_bytes(rules+b'\nalert udp any any -> any 49000 (msg:"CERBER isolated load fixture"; content:"CERBER_LOADLAB_"; sid:9900001; rev:1;)\n')
@@ -236,18 +262,29 @@ def run(sustained):
     # End short single-packet UDP flows promptly; record this lab override.
     s+='\nflow-timeouts:\n  udp:\n    new: 5\n    established: 5\n    closed: 0\n'
     # Distribution already contains this section: replace it, do not use duplicate keys.
-    import re
     matches=list(re.finditer(r'(?m)^flow-timeouts:',s))
     if len(matches)>1:
         a=matches[0].start();m=re.search(r'(?m)^[a-zA-Z][a-zA-Z0-9_-]*:',s[matches[0].end():]);b=matches[0].end()+m.start();s=s[:a]+s[b:]
+    if capture_backend == 'af-xdp':
+        section = ('af-xdp:\n  - interface: cerber-span\n    threads: 1\n'
+                   '    force-xdp-mode: skb\n    force-bind-mode: copy\n    enable-busy-poll: no\n')
+        s, count = re.subn(r'(?ms)^af-xdp:.*?(?=^[a-zA-Z][a-zA-Z0-9_-]*:|\Z)', lambda _:section+'\n', s)
+        if count == 0:
+            s += '\n' + section
+        elif count != 1:
+            raise ValueError('Ambiguous af-xdp configuration')
+        RESULT['xdp_settings'] = {'mode':'skb', 'bind':'copy', 'busy_poll':False, 'threads':1}
     yaml.write_text(s);RESULT['udp_flow_timeout_seconds']=5
     (ROOT/'filter.bpf').write_text('udp dst port 49000\n')
-    for cmd in [['ip','link','add','cerber-span','type','veth','peer','name','cerber-tap'],['ip','link','set','cerber-span','up'],['ip','link','set','cerber-tap','up']]:subprocess.run(cmd,check=True)
+    subprocess.run(['ip','link','add','cerber-span','type','veth','peer','name','cerber-tap'],check=True)
+    for dev in ('cerber-span', 'cerber-tap'):
+        subprocess.run(['ip','link','set','dev',dev,'addrgenmode','none'],check=True)
+        subprocess.run(['ip','link','set',dev,'up'],check=True)
     (OUT/'traffic.pcap').write_bytes(struct.pack('<IHHIIII',0xa1b2c3d4,2,4,0,0,65535,1))
     proxy=http.server.ThreadingHTTPServer(('127.0.0.1',18791),Proxy);threading.Thread(target=proxy.serve_forever,daemon=True).start()
-    server();wait(ready,'SIEM ready',60);sensor();engine()
+    server();wait(ready,'SIEM ready',60);sensor();capture = engine()
     threading.Thread(target=sample,daemon=True).start()
-    wait(lambda:'Engine started' in (OUT/'suricata.log').read_text(),'Suricata ready',120)
+    wait_engine(*capture)
     RESULT['ruleset_stats']=json.loads(subprocess.check_output(['suricatasc','/lab/rules/suricata.socket','-c','ruleset-stats'],text=True,timeout=5))
     if sustained:
         PHASE = 'steady_100_sustained'
@@ -297,8 +334,9 @@ def run(sustained):
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sustained', action='store_true', help='Run a ten-minute series at 100 packets/s')
+    parser.add_argument('--capture', choices=['af-packet','af-xdp'], default='af-packet')
     args = parser.parse_args()
-    try:run(args.sustained)
+    try:run(args.sustained, args.capture)
     except Exception:
         OUT.mkdir(parents=True,exist_ok=True);RESULT['status']='failed';RESULT['error']=traceback.format_exc();save('result.json',RESULT);raise
     finally:
