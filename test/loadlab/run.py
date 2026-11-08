@@ -63,7 +63,9 @@ def wait_engine(process, offset):
     if RESULT['capture_backend'] == 'af-xdp':
         link = json.loads(subprocess.check_output(['ip', '-j', '-d', 'link', 'show', 'dev', 'cerber-span']))[0]
         attached = link.get('xdp', {})
-        assert attached.get('mode') == 2 and attached.get('prog', {}).get('id'), 'No generic XDP program on test veth'
+        mode = RESULT['xdp_settings']['mode']
+        expected_mode = {'drv':1,'skb':2}[mode]
+        assert attached.get('mode') == expected_mode and attached.get('prog', {}).get('id'), f'No {mode} XDP program on test veth'
         RESULT.setdefault('xdp_attachments', []).append(attached)
 
 def wait(fn, label, timeout=360):
@@ -244,7 +246,7 @@ def load_and_recovery():
     PHASE='suricata_restart';stop('suricata');wait_engine(*engine())
     begin=time.time();ids,elapsed=send(50,4);wait(lambda:done(ids),'capture after engine restart');summary(PHASE,ids,begin,elapsed,50)
 
-def run(sustained, capture_backend):
+def run(sustained, capture_backend, xdp_mode):
     global PHASE
     # Refuse attached networking and non-empty state (no chance of running on a live SIEM).
     links=json.loads(subprocess.check_output(['ip','-j','address','show'],text=True))
@@ -267,13 +269,13 @@ def run(sustained, capture_backend):
         a=matches[0].start();m=re.search(r'(?m)^[a-zA-Z][a-zA-Z0-9_-]*:',s[matches[0].end():]);b=matches[0].end()+m.start();s=s[:a]+s[b:]
     if capture_backend == 'af-xdp':
         section = ('af-xdp:\n  - interface: cerber-span\n    threads: 1\n'
-                   '    force-xdp-mode: skb\n    force-bind-mode: copy\n    enable-busy-poll: no\n')
+                   f'    force-xdp-mode: {xdp_mode}\n    force-bind-mode: copy\n    enable-busy-poll: no\n')
         s, count = re.subn(r'(?ms)^af-xdp:.*?(?=^[a-zA-Z][a-zA-Z0-9_-]*:|\Z)', lambda _:section+'\n', s)
         if count == 0:
             s += '\n' + section
         elif count != 1:
             raise ValueError('Ambiguous af-xdp configuration')
-        RESULT['xdp_settings'] = {'mode':'skb', 'bind':'copy', 'busy_poll':False, 'threads':1}
+        RESULT['xdp_settings'] = {'mode':xdp_mode, 'bind':'copy', 'busy_poll':False, 'threads':1}
     yaml.write_text(s);RESULT['udp_flow_timeout_seconds']=5
     (ROOT/'filter.bpf').write_text('udp dst port 49000\n')
     subprocess.run(['ip','link','add','cerber-span','type','veth','peer','name','cerber-tap'],check=True)
@@ -335,8 +337,11 @@ if __name__=='__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sustained', action='store_true', help='Run a ten-minute series at 100 packets/s')
     parser.add_argument('--capture', choices=['af-packet','af-xdp'], default='af-packet')
+    parser.add_argument('--xdp-mode', choices=['skb','drv'])
     args = parser.parse_args()
-    try:run(args.sustained, args.capture)
+    if args.xdp_mode and args.capture != 'af-xdp':
+        parser.error('--xdp-mode requires --capture af-xdp')
+    try:run(args.sustained, args.capture, args.xdp_mode or 'skb')
     except Exception:
         OUT.mkdir(parents=True,exist_ok=True);RESULT['status']='failed';RESULT['error']=traceback.format_exc();save('result.json',RESULT);raise
     finally:

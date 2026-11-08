@@ -13,10 +13,11 @@ def main():
     parser.add_argument('--output',required=True,type=pathlib.Path,help='New local output directory; contains synthetic packet captures and metrics')
     parser.add_argument('--sustained', action='store_true', help='Run a ten-minute series at 100 packets/s instead of the short recovery profile')
     parser.add_argument('--capture', choices=['af-packet','af-xdp'], default='af-packet', help='Capture backend on the isolated veth')
+    parser.add_argument('--xdp-mode', choices=['skb','drv'], help='Force generic (skb) or driver (drv) XDP on the test veth; default skb')
     parser.add_argument('--xdp-sys-admin', action='store_true', help='Allow SYS_ADMIN in the AF_XDP test container for kernels that restrict BPF object lookup')
     args=parser.parse_args()
-    if args.xdp_sys_admin and args.capture != 'af-xdp':
-        parser.error('--xdp-sys-admin requires --capture af-xdp')
+    if (args.xdp_sys_admin or args.xdp_mode) and args.capture != 'af-xdp':
+        parser.error('XDP options require --capture af-xdp')
     repo=pathlib.Path(__file__).resolve().parents[2]
     rules=args.rules.resolve();out=args.output.resolve()
     if not rules.is_file() or out.exists():parser.error('rules must exist and output must be a new directory')
@@ -36,7 +37,7 @@ def main():
         capabilities.extend(['BPF','PERFMON'])
     if args.xdp_sys_admin:
         capabilities.append('SYS_ADMIN')
-    manifest={'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),'architecture':arch,'docker_cpus':info['NCPU'],'docker_memory_bytes':info['MemTotal'],'container_cpus':4,'container_memory_bytes':4*1024**3,'rules_sha256':hashlib.sha256(rules.read_bytes()).hexdigest(),'sustained':args.sustained,'network':'none','capabilities':capabilities,'capture_backend':args.capture,'binaries':{n:hashlib.sha256((build/n).read_bytes()).hexdigest() for n in ['cerber','cerber-sensor','seed']}}
+    manifest={'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),'architecture':arch,'docker_cpus':info['NCPU'],'docker_memory_bytes':info['MemTotal'],'container_cpus':4,'container_memory_bytes':4*1024**3,'rules_sha256':hashlib.sha256(rules.read_bytes()).hexdigest(),'sustained':args.sustained,'network':'none','capabilities':capabilities,'capture_backend':args.capture,'xdp_mode':(args.xdp_mode or 'skb') if args.capture=='af-xdp' else None,'binaries':{n:hashlib.sha256((build/n).read_bytes()).hexdigest() for n in ['cerber','cerber-sensor','seed']}}
     (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     with (out/'build.log').open('w') as log:run('docker','build','-t',image,str(build),stdout=log,stderr=subprocess.STDOUT)
     with ExitStack() as cleanup:
@@ -58,6 +59,8 @@ def main():
             opts.extend(['--mount','type=volume,src='+bpffs+',dst=/sys/fs/bpf,volume-nocopy','--ulimit','memlock=-1'])
         cleanup.callback(subprocess.run,['docker','rm','-f',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         command = ['docker','run',*opts,image,'python3','/scripts/run.py','--capture',args.capture]
+        if args.xdp_mode:
+            command.extend(['--xdp-mode',args.xdp_mode])
         if args.sustained:
             command.append('--sustained')
         with (out/'run.log').open('w') as log:
