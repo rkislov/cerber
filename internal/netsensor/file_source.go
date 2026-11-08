@@ -23,6 +23,7 @@ type meteredFile struct {
 func (f meteredFile) collect(ctx context.Context, r *Receiver, queued chan<- struct{}, onError func(error)) {
 	changes, stop := eveWakeups(ctx, f.input.Path)
 	defer stop()
+	active := false
 	for ctx.Err() == nil {
 		status, records, err := eventcollector.CollectPage(ctx, r.spool, r.agent, f.source)
 		if ctx.Err() != nil {
@@ -37,13 +38,20 @@ func (f meteredFile) collect(ctx context.Context, r *Receiver, queued chan<- str
 			case queued <- struct{}{}:
 			default:
 			}
-			continue
+			// Drain full pages immediately. After a short page allow one more
+			// read, but don't perpetually enqueue tiny pages near a live EOF.
+			if !active || len(records) == telemetry.MaxRecords || changes == nil {
+				active = true
+				continue
+			}
 		}
-		// Notifications may shorten an idle wait, never an error/full-spool retry.
+		// During continuous traffic retain the normal batching interval.
+		// Only a quiet reader wakes early; failures always use the full retry.
 		wake := changes
-		if err != nil {
+		if err != nil || active {
 			wake = nil
 		}
+		active = false
 		waitForEVE(ctx, wake)
 	}
 }
