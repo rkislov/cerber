@@ -9,9 +9,11 @@ def run(*args, **kwargs):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--rules',required=True,type=pathlib.Path,help='Local ET Open .rules snapshot (never downloaded by the runtime)')
+    parser.add_argument('--rules',type=pathlib.Path,help='Local ET Open .rules snapshot (never downloaded by the runtime)')
     parser.add_argument('--output',required=True,type=pathlib.Path,help='New local output directory; contains synthetic packet captures and metrics')
-    parser.add_argument('--sustained', action='store_true', help='Run a ten-minute series at 100 packets/s instead of the short recovery profile')
+    profiles = parser.add_mutually_exclusive_group()
+    profiles.add_argument('--idle-eve', action='store_true', help='Measure EVE append to durable cursor after quiet periods, without a ruleset')
+    profiles.add_argument('--sustained', action='store_true', help='Run a ten-minute series at 100 packets/s instead of the short recovery profile')
     parser.add_argument('--capture', choices=['af-packet','af-xdp'], default='af-packet', help='Capture backend on the isolated veth')
     parser.add_argument('--xdp-mode', choices=['skb','drv'], help='Force generic (skb) or driver (drv) XDP on the test veth; default skb')
     parser.add_argument('--xdp-sys-admin', action='store_true', help='Allow SYS_ADMIN in the AF_XDP test container for kernels that restrict BPF object lookup')
@@ -19,25 +21,32 @@ def main():
     if (args.xdp_sys_admin or args.xdp_mode) and args.capture != 'af-xdp':
         parser.error('XDP options require --capture af-xdp')
     repo=pathlib.Path(__file__).resolve().parents[2]
-    rules=args.rules.resolve();out=args.output.resolve()
-    if not rules.is_file() or out.exists():parser.error('rules must exist and output must be a new directory')
+    rules = args.rules.resolve() if args.rules else None
+    out = args.output.resolve()
+    if not args.idle_eve and (rules is None or not rules.is_file()):
+        parser.error('a local rules snapshot is required for the capture profiles')
+    if args.idle_eve and args.capture != 'af-packet':
+        parser.error('the idle EVE profile does not start a capture engine')
+    if out.exists():
+        parser.error('output must be a new directory')
     info=json.loads(subprocess.check_output(['docker','info','--format','{{json .}}'],text=True))
     arch={'aarch64':'arm64','arm64':'arm64','x86_64':'amd64','amd64':'amd64'}.get(info['Architecture'])
     if not arch:parser.error('Docker architecture must be arm64 or x86_64')
     if info['MemTotal']<5*1024**3:parser.error('Docker needs at least 5 GiB available memory configuration')
     out.mkdir(parents=True,mode=0o700);build=out/'build';build.mkdir();inputs=out/'input';inputs.mkdir()
-    shutil.copyfile(rules,inputs/'active.rules')
+    if not args.idle_eve:
+        shutil.copyfile(rules,inputs/'active.rules')
     shutil.copyfile(repo/'test/loadlab/Dockerfile',build/'Dockerfile')
     env=dict(os.environ,CGO_ENABLED='0',GOOS='linux',GOARCH=arch)
     for name,source in [('cerber','./cmd/cerber'),('cerber-sensor','./cmd/cerber-sensor'),('seed','./test/loadlab/seed')]:
         run('go','build','-trimpath','-o',str(build/name),source,cwd=repo,env=env)
     name='cerber-loadlab-'+uuid.uuid4().hex[:12];volume=name;image=name+':local'
-    capabilities = ['NET_ADMIN','NET_RAW']
+    capabilities = [] if args.idle_eve else ['NET_ADMIN','NET_RAW']
     if args.capture == 'af-xdp':
         capabilities.extend(['BPF','PERFMON'])
     if args.xdp_sys_admin:
         capabilities.append('SYS_ADMIN')
-    manifest={'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),'architecture':arch,'docker_cpus':info['NCPU'],'docker_memory_bytes':info['MemTotal'],'container_cpus':4,'container_memory_bytes':4*1024**3,'rules_sha256':hashlib.sha256(rules.read_bytes()).hexdigest(),'sustained':args.sustained,'network':'none','capabilities':capabilities,'capture_backend':args.capture,'xdp_mode':(args.xdp_mode or 'skb') if args.capture=='af-xdp' else None,'binaries':{n:hashlib.sha256((build/n).read_bytes()).hexdigest() for n in ['cerber','cerber-sensor','seed']}}
+    manifest={'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),'architecture':arch,'docker_cpus':info['NCPU'],'docker_memory_bytes':info['MemTotal'],'container_cpus':4,'container_memory_bytes':4*1024**3,'rules_sha256':None if args.idle_eve else hashlib.sha256(rules.read_bytes()).hexdigest(),'idle_eve':args.idle_eve,'sustained':args.sustained,'network':'none','capabilities':capabilities,'capture_backend':args.capture,'xdp_mode':(args.xdp_mode or 'skb') if args.capture=='af-xdp' else None,'binaries':{n:hashlib.sha256((build/n).read_bytes()).hexdigest() for n in ['cerber','cerber-sensor','seed']}}
     (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     with (out/'build.log').open('w') as log:run('docker','build','-t',image,str(build),stdout=log,stderr=subprocess.STDOUT)
     with ExitStack() as cleanup:
@@ -59,6 +68,8 @@ def main():
             opts.extend(['--mount','type=volume,src='+bpffs+',dst=/sys/fs/bpf,volume-nocopy','--ulimit','memlock=-1'])
         cleanup.callback(subprocess.run,['docker','rm','-f',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         command = ['docker','run',*opts,image,'python3','/scripts/run.py','--capture',args.capture]
+        if args.idle_eve:
+            command = ['docker','run',*opts,image,'python3','/scripts/idle_eve.py']
         if args.xdp_mode:
             command.extend(['--xdp-mode',args.xdp_mode])
         if args.sustained:
@@ -76,6 +87,6 @@ def main():
                         raise RuntimeError('Could not export evidence; inspect run.log')
             if completed.returncode:
                 raise RuntimeError('Lab failed; inspect run.log and evidence/suricata.log')
-    print('Evidence:',out/'evidence/result.json')
+    print('Evidence:',out/'evidence'/('idle-eve.json' if args.idle_eve else 'result.json'))
 
 if __name__=='__main__':main()

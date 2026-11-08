@@ -21,6 +21,8 @@ type meteredFile struct {
 }
 
 func (f meteredFile) collect(ctx context.Context, r *Receiver, queued chan<- struct{}, onError func(error)) {
+	changes, stop := eveWakeups(ctx, f.input.Path)
+	defer stop()
 	for ctx.Err() == nil {
 		status, records, err := eventcollector.CollectPage(ctx, r.spool, r.agent, f.source)
 		if ctx.Err() != nil {
@@ -37,12 +39,32 @@ func (f meteredFile) collect(ctx context.Context, r *Receiver, queued chan<- str
 			}
 			continue
 		}
-		// At EOF, an incomplete line, or backpressure, poll at the idle rate.
-		timer := time.NewTimer(time.Second)
+		// Notifications may shorten an idle wait, never an error/full-spool retry.
+		wake := changes
+		if err != nil {
+			wake = nil
+		}
+		waitForEVE(ctx, wake)
+	}
+}
+
+func waitForEVE(ctx context.Context, wake <-chan struct{}) {
+	// Coalesce writes arriving just after an EOF scan into a single read.
+	// A write after a quiet period can wake the reader immediately.
+	earliest := time.Now().Add(50 * time.Millisecond)
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+		return
+	case <-wake:
+	}
+	if remaining := time.Until(earliest); remaining > 0 {
+		timer.Reset(remaining)
 		select {
 		case <-ctx.Done():
-			timer.Stop()
-			return
 		case <-timer.C:
 		}
 	}

@@ -6,6 +6,7 @@ toolchain go1.26.10
 
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-ldap/ldap/v3 v3.4.14
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.47.0
