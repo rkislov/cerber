@@ -350,8 +350,9 @@ sampled IPv4/IPv6 и sampled header (Ethernet, до двух VLAN, IPv4/IPv6). �
 
 ## Suricata 8 и центральный Feed
 
-Контейнер `deploy/suricata/Dockerfile` закреплён на Suricata **8.0.3** и digest
-мультиархитектурного образа `jasonish/suricata` для Linux amd64/arm64. Тот же
+Контейнер `deploy/suricata/Dockerfile` закреплён на Suricata **8.0.8** из официального PPA OISF для Linux amd64/arm64.
+SHA-256 пакетов и digest Ubuntu 24.04 зафиксированы в Dockerfile. Ubuntu сохраняет
+поддержку базового x86_64, включая виртуальные CPU без x86-64-v2. Тот же
 образ с Cerber используется для захвата и проверки правил сетевым сенсором.
 Захват остаётся пассивным AF_PACKET. Обновление не включает XDP, IPS или SPAN
 на интерфейсе управления.
