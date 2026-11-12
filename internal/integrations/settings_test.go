@@ -188,3 +188,27 @@ func TestDirectorySettingsEncryptedIndependentAndRedacted(t *testing.T) {
 		t.Fatal("cross-scope change", e)
 	}
 }
+
+func TestFeedSecretIndependentEncryptedAndRedacted(t *testing.T) {
+	s := testStore(t)
+	key := "feed-fixture-secret"
+	enabled := true
+	if e := s.Save(Command{Version: s.View().Version, Scope: "feed", FeedKey: &key, FeedEnabled: &enabled}, "roman"); e != nil {
+		t.Fatal(e)
+	}
+	view, _ := json.Marshal(s.View())
+	disk, _ := os.ReadFile(s.path)
+	if bytes.Contains(view, []byte(key)) || bytes.Contains(disk, []byte(key)) {
+		t.Fatal("feed key leaked")
+	}
+	if e := s.Save(Command{Version: s.View().Version, Scope: "smtp", SMTP: s.View().SMTP}, "roman"); e != nil {
+		t.Fatal(e)
+	}
+	on, got := s.FeedConfig()
+	if !on || got != key {
+		t.Fatal("other scope overwrote feed")
+	}
+	if e := s.Save(Command{Version: s.View().Version, Scope: "feed", ClearFeedKey: true}, "roman"); e == nil {
+		t.Fatal("enabled feed lost key")
+	}
+}

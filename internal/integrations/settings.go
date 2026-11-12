@@ -42,6 +42,8 @@ type Change struct {
 	Fields  []string  `json:"fields"`
 }
 type configuration struct {
+	FeedEnabled      bool             `json:"feed_enabled"`
+	FeedKey          string           `json:"feed_key,omitempty"`
 	Directory        directory.Config `json:"directory"`
 	ThreatFoxEnabled bool             `json:"threatfox_enabled"`
 	Version          int64            `json:"version"`
@@ -50,6 +52,8 @@ type configuration struct {
 	History          []Change         `json:"history"`
 }
 type View struct {
+	FeedEnabled          bool             `json:"feed_enabled"`
+	FeedKeySet           bool             `json:"feed_key_set"`
 	Directory            directory.Config `json:"directory"`
 	DirectoryPasswordSet bool             `json:"directory_password_set"`
 	ThreatFoxEnabled     bool             `json:"threatfox_enabled"`
@@ -61,6 +65,9 @@ type View struct {
 	History              []Change         `json:"history"`
 }
 type Command struct {
+	FeedEnabled            *bool            `json:"feed_enabled,omitempty"`
+	FeedKey                *string          `json:"feed_key,omitempty"`
+	ClearFeedKey           bool             `json:"clear_feed_key"`
 	Directory              directory.Config `json:"directory"`
 	DirectoryPassword      *string          `json:"directory_password,omitempty"`
 	ClearDirectoryPassword bool             `json:"clear_directory_password"`
@@ -140,7 +147,7 @@ func Open(path, keyPath string) (*Store, error) {
 func (s *Store) View() View {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	v := View{ThreatFoxEnabled: s.config.ThreatFoxEnabled, Configured: true, Version: s.config.Version, SMTP: s.config.SMTP, SMTPPasswordSet: s.config.SMTP.Password != "", ThreatFoxKeySet: s.config.ThreatFoxKey != "", History: append([]Change{}, s.config.History...)}
+	v := View{FeedEnabled: s.config.FeedEnabled, FeedKeySet: s.config.FeedKey != "", ThreatFoxEnabled: s.config.ThreatFoxEnabled, Configured: true, Version: s.config.Version, SMTP: s.config.SMTP, SMTPPasswordSet: s.config.SMTP.Password != "", ThreatFoxKeySet: s.config.ThreatFoxKey != "", History: append([]Change{}, s.config.History...)}
 	v.Directory = s.config.Directory
 	v.DirectoryPasswordSet = v.Directory.Password != ""
 	v.Directory.Password = ""
@@ -149,6 +156,14 @@ func (s *Store) View() View {
 	return v
 }
 func validate(c configuration) error {
+	if c.FeedEnabled && c.FeedKey == "" || len(c.FeedKey) > 512 {
+		return ErrInvalid
+	}
+	for _, r := range c.FeedKey {
+		if r < 33 || r > 126 {
+			return ErrInvalid
+		}
+	}
 	if c.Directory.Validate() != nil {
 		return ErrInvalid
 	}
@@ -224,6 +239,12 @@ func validConsoleURL(value string) bool {
 func (s *Store) Save(c Command, actor string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if (c.FeedKey != nil && c.ClearFeedKey) || (c.Scope != "feed" && (c.FeedEnabled != nil || c.FeedKey != nil || c.ClearFeedKey)) {
+		return ErrInvalid
+	}
+	if c.Scope == "feed" && (c.SMTPPassword != nil || c.ClearSMTPPassword || c.ThreatFoxEnabled != nil || c.ThreatFoxKey != nil || c.ClearThreatFoxKey) {
+		return ErrInvalid
+	}
 	if c.Version != s.config.Version {
 		return ErrConflict
 	}
@@ -238,7 +259,7 @@ func (s *Store) Save(c Command, actor string) error {
 	}
 	next := s.config
 	next.Version++
-	if c.Scope != "" && c.Scope != "smtp" && c.Scope != "threatfox" && c.Scope != "directory" {
+	if c.Scope != "" && c.Scope != "smtp" && c.Scope != "threatfox" && c.Scope != "directory" && c.Scope != "feed" {
 		return ErrInvalid
 	}
 	if c.Scope == "smtp" && (c.ThreatFoxKey != nil || c.ClearThreatFoxKey || c.ThreatFoxEnabled != nil) {
@@ -247,7 +268,7 @@ func (s *Store) Save(c Command, actor string) error {
 	if c.Scope == "threatfox" && (c.SMTPPassword != nil || c.ClearSMTPPassword) {
 		return ErrInvalid
 	}
-	if c.Scope != "threatfox" && c.Scope != "directory" {
+	if c.Scope != "threatfox" && c.Scope != "directory" && c.Scope != "feed" {
 		next.SMTP = c.SMTP
 		next.SMTP.To = append([]string{}, c.SMTP.To...)
 		next.SMTP.Password = s.config.SMTP.Password
@@ -277,14 +298,28 @@ func (s *Store) Save(c Command, actor string) error {
 	if c.ClearThreatFoxKey {
 		next.ThreatFoxKey = ""
 	}
+	if c.Scope == "feed" {
+		if c.FeedEnabled != nil {
+			next.FeedEnabled = *c.FeedEnabled
+		}
+		if c.FeedKey != nil {
+			next.FeedKey = *c.FeedKey
+		}
+		if c.ClearFeedKey {
+			next.FeedKey = ""
+		}
+	}
 	if e := validate(next); e != nil {
 		return e
 	}
 	fields := []string{}
+	if c.Scope == "feed" {
+		fields = append(fields, "feed")
+	}
 	if c.Scope == "directory" {
 		fields = append(fields, "directory")
 	}
-	if c.Scope != "threatfox" && c.Scope != "directory" {
+	if c.Scope != "threatfox" && c.Scope != "directory" && c.Scope != "feed" {
 		fields = append(fields, "smtp")
 	}
 	if c.Scope == "threatfox" || c.ThreatFoxKey != nil || c.ClearThreatFoxKey {
@@ -335,3 +370,5 @@ func (s *Store) DirectoryConfig() directory.Config { return s.snapshot().Directo
 func (s *Store) ProbeDirectory(ctx context.Context) (directory.Domain, error) {
 	return directory.Probe(ctx, s.DirectoryConfig())
 }
+
+func (s *Store) FeedConfig() (bool, string) { c := s.snapshot(); return c.FeedEnabled, c.FeedKey }

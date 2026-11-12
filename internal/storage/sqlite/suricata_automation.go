@@ -176,7 +176,7 @@ func shortRuleError(e error) string {
 }
 func (s *Store) CompleteSuricataFeed(ctx context.Context, task rules.Feed, b rules.Bundle, downloadErr error, now time.Time) error {
 	if downloadErr == nil {
-		if b.Manifest.EngineMajor != task.EngineMajor || b.Manifest.Source != "et-open" {
+		if b.Manifest.EngineMajor != task.EngineMajor || (b.Manifest.Source != "et-open" && b.Manifest.Source != "feed") {
 			downloadErr = rules.ErrInvalid
 		} else {
 			_, downloadErr = rules.Unpack(b.Manifest, b.Data)

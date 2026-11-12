@@ -44,8 +44,10 @@ type saved struct {
 	Applied *Manifest `json:"applied,omitempty"`
 }
 type transaction struct {
-	Before  saved `json:"before"`
-	Attempt saved `json:"attempt"`
+	Before                saved `json:"before"`
+	Attempt               saved `json:"attempt"`
+	ClassificationChanged bool  `json:"classification_changed,omitempty"`
+	HadClassification     bool  `json:"had_classification,omitempty"`
 }
 type Manager struct {
 	config   Config
@@ -220,6 +222,22 @@ func (m *Manager) restore(t transaction) error {
 	if e = atomic(m.file("active.rules"), b); e != nil {
 		return e
 	}
+	if t.ClassificationChanged {
+		if t.HadClassification {
+			b, e = readBounded(m.file("previous.rules.classification.config"), MaxClassification)
+			if e == nil {
+				e = atomic(m.file("active.rules.classification.config"), b)
+			}
+		} else {
+			e = os.Remove(m.file("active.rules.classification.config"))
+			if os.IsNotExist(e) {
+				e = nil
+			}
+		}
+		if e != nil {
+			return fmt.Errorf("rollback classification unavailable: %w", e)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	count := 0
@@ -265,7 +283,7 @@ func (m *Manager) apply(parent context.Context, a Assignment) {
 		fail(e)
 		return
 	}
-	plain, e := Unpack(a.Bundle, data)
+	plain, classification, e := UnpackFiles(a.Bundle, data)
 	if e != nil {
 		fail(fmt.Errorf("package checksum/content verification failed"))
 		return
@@ -276,6 +294,23 @@ func (m *Manager) apply(parent context.Context, a Assignment) {
 		return
 	}
 	defer os.Remove(candidate)
+	classCandidate := candidate + ".classification.config"
+	if classification == "" {
+		// Legacy/custom rule-only bundles retain the currently configured classes.
+		b, err := readBounded(m.file("active.rules.classification.config"), MaxClassification)
+		if err != nil && !os.IsNotExist(err) {
+			fail(err)
+			return
+		}
+		classification = string(b)
+	}
+	if classification != "" {
+		if e = atomic(classCandidate, []byte(classification)); e != nil {
+			fail(e)
+			return
+		}
+		defer os.Remove(classCandidate)
+	}
 	large := len(plain) > 4<<20
 	plain = nil
 	data = nil
@@ -303,13 +338,34 @@ func (m *Manager) apply(parent context.Context, a Assignment) {
 		return
 	}
 	t := transaction{Before: before, Attempt: v}
+	if classification != "" {
+		t.ClassificationChanged = true
+		oldClass, err := readBounded(m.file("active.rules.classification.config"), MaxClassification)
+		if err != nil && !os.IsNotExist(err) {
+			fail(err)
+			return
+		}
+		t.HadClassification = err == nil
+		if t.HadClassification {
+			if e = atomic(m.file("previous.rules.classification.config"), oldClass); e != nil {
+				fail(e)
+				return
+			}
+		}
+	}
 	journal, _ := json.Marshal(t)
 	if e = atomic(m.file("transaction.json"), journal); e != nil {
 		fail(e)
 		return
 	}
 	m.state(&v, "reloading", "")
-	if e = os.Rename(candidate, m.file("active.rules")); e == nil {
+	if classification != "" {
+		e = os.Rename(classCandidate, m.file("active.rules.classification.config"))
+	}
+	if e == nil {
+		e = os.Rename(candidate, m.file("active.rules"))
+	}
+	if e == nil {
 		e = syncDirectory(m.config.Directory)
 		if e == nil {
 			e = m.engine.Reload(ctx, a.Bundle.Count)
@@ -346,4 +402,5 @@ func (m *Manager) apply(parent context.Context, a Assignment) {
 	}
 	m.set(v)
 	_ = os.Remove(m.file("previous.rules"))
+	_ = os.Remove(m.file("previous.rules.classification.config"))
 }

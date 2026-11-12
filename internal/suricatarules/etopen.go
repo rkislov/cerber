@@ -41,54 +41,70 @@ func DownloadET(ctx context.Context, major int) (Bundle, error) {
 	if e != nil || len(data) > MaxCompressed {
 		return Bundle{}, fmt.Errorf("ET Open archive exceeds limit")
 	}
-	rules, e := ExtractET(data)
+	rules, classification, e := ExtractETFiles(data)
 	if e != nil {
 		return Bundle{}, e
 	}
-	return Pack("ET Open "+time.Now().UTC().Format("2006-01-02 15:04"), "et-open", major, rules)
+	return PackFiles("ET Open "+time.Now().UTC().Format("2006-01-02 15:04"), "et-open", major, rules, classification)
 }
 func ExtractET(data []byte) ([]byte, error) {
+	rules, _, err := ExtractETFiles(data)
+	return rules, err
+}
+func ExtractETFiles(data []byte) ([]byte, string, error) {
 	z, e := gzip.NewReader(bytes.NewReader(data))
 	if e != nil {
-		return nil, ErrInvalid
+		return nil, "", ErrInvalid
 	}
 	defer z.Close()
 	limited := &io.LimitedReader{R: z, N: 96<<20 + 1}
 	tr := tar.NewReader(limited)
 	files := map[string][]byte{}
 	total := 0
+	classification := ""
 	for entries := 0; ; entries++ {
 		h, e := tr.Next()
 		if e == io.EOF {
 			break
 		}
 		if e != nil || entries > 512 {
-			return nil, ErrInvalid
+			return nil, "", ErrInvalid
 		}
 		if path.IsAbs(h.Name) || path.Clean(h.Name) != strings.TrimSuffix(h.Name, "/") || strings.HasPrefix(h.Name, "../") || h.Typeflag != tar.TypeDir && h.Typeflag != tar.TypeReg {
-			return nil, ErrInvalid
+			return nil, "", ErrInvalid
+		}
+		if h.Typeflag == tar.TypeReg && path.Base(h.Name) == "classification.config" {
+			if classification != "" || h.Size < 1 || h.Size > MaxClassification {
+				return nil, "", ErrInvalid
+			}
+			value, err := io.ReadAll(tr)
+			if err != nil || ValidateClassification(string(value)) != nil {
+				return nil, "", ErrInvalid
+			}
+			classification = string(value)
+			continue
 		}
 		if h.Typeflag != tar.TypeReg || !strings.HasSuffix(h.Name, ".rules") {
 			continue
 		}
 		if _, ok := files[h.Name]; ok {
-			return nil, ErrInvalid
+			return nil, "", ErrInvalid
 		}
 		if h.Size < 0 || h.Size > MaxRules-int64(total) {
-			return nil, ErrLimit
+			return nil, "", ErrLimit
 		}
 		b, e := io.ReadAll(tr)
 		if e != nil {
-			return nil, e
+			return nil, "", e
 		}
 		total += len(b)
 		files[h.Name] = b
 	}
 	if _, e = io.Copy(io.Discard, limited); e != nil {
-		return nil, ErrInvalid
+		return nil, "", ErrInvalid
 	}
 	if limited.N <= 0 || len(files) == 0 {
-		return nil, ErrInvalid
+		return nil, "", ErrInvalid
 	}
 	names := make([]string, 0, len(files))
 	for n := range files {
@@ -100,5 +116,5 @@ func ExtractET(data []byte) ([]byte, error) {
 		out.Write(files[n])
 		out.WriteByte('\n')
 	}
-	return out.Bytes(), nil
+	return out.Bytes(), classification, nil
 }

@@ -55,6 +55,37 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 	command := args[0] + " " + args[1]
 	f := flags(command, errOut)
 	switch command {
+	case "siem import-suricata":
+		path := f.String("zip", "", "offline Cerber Feed ZIP")
+		actor := f.String("admin", "", "existing administrator for the local import audit")
+		if err := parse(f, args[2:]); err != nil {
+			return err
+		}
+		u, err := store.AdminUser(ctx, *actor)
+		if err != nil || u.Disabled || u.Role != "administrator" {
+			return admin.ErrForbidden
+		}
+		file, err := os.Open(*path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		st, err := file.Stat()
+		if err != nil {
+			return err
+		}
+		if !st.Mode().IsRegular() {
+			return suricatarules.ErrInvalid
+		}
+		bundle, err := suricatarules.ImportFeedZIP(file, st.Size())
+		if err != nil {
+			return err
+		}
+		manifest, err := store.PutSuricataBundle(admin.WithPrincipal(ctx, u), bundle)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(manifest)
 	case "siem agents":
 		asset := f.String("asset", "", "optional server asset ID")
 		after := f.String("after", "", "exclusive agent ID cursor")
@@ -311,7 +342,15 @@ func centralCommand(ctx context.Context, store *sqlite.Store, args []string, out
 				defer close(rolloutDone)
 				suricatarules.RunRollouts(monitorCtx, store, func(e error) { fmt.Fprintf(errOut, "Suricata rollout: %v\n", e) })
 			}()
-			suricatarules.RunAutomation(monitorCtx, store, func(e error) { fmt.Fprintf(errOut, "Suricata scheduler: %v\n", e) })
+			suricatarules.RunAutomation(monitorCtx, store, func(e error) { fmt.Fprintf(errOut, "Suricata scheduler: %v\n", e) }, func(ctx context.Context, major int) (suricatarules.Bundle, error) {
+				if integrationStore != nil {
+					enabled, key := integrationStore.FeedConfig()
+					if enabled {
+						return suricatarules.NewFeedClient().Download(ctx, key, major)
+					}
+				}
+				return suricatarules.DownloadET(ctx, major)
+			})
 			<-rolloutDone
 		}()
 

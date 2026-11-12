@@ -6,12 +6,13 @@ import (
 	"errors"
 	"github.com/rkislov/cerber/internal/directory"
 	"github.com/rkislov/cerber/internal/integrations"
+	"github.com/rkislov/cerber/internal/suricatarules"
 	"net/http"
 	"time"
 )
 
 func integrationManagement(store *integrations.Store, w http.ResponseWriter, r *http.Request, user User, slots chan struct{}, workers ...*integrations.Worker) bool {
-	if r.URL.Path != "/admin/api/settings/check-directory-account" && r.URL.Path != "/admin/api/settings/test-directory" && r.URL.Path != "/admin/api/settings/runtime" && r.URL.Path != "/admin/api/settings/sync-threatfox" && r.URL.Path != "/admin/api/settings" && r.URL.Path != "/admin/api/settings/test-smtp" && r.URL.Path != "/admin/api/settings/test-threatfox" {
+	if r.URL.Path != "/admin/api/settings/test-feed" && r.URL.Path != "/admin/api/settings/check-directory-account" && r.URL.Path != "/admin/api/settings/test-directory" && r.URL.Path != "/admin/api/settings/runtime" && r.URL.Path != "/admin/api/settings/sync-threatfox" && r.URL.Path != "/admin/api/settings" && r.URL.Path != "/admin/api/settings/test-smtp" && r.URL.Path != "/admin/api/settings/test-threatfox" {
 		return false
 	}
 	if user.Role != "administrator" || user.Username == "" {
@@ -113,6 +114,16 @@ func integrationManagement(store *integrations.Store, w http.ResponseWriter, r *
 			writeJSON(w, map[string]any{"ok": false, "message": e.Error()})
 		} else {
 			writeJSON(w, map[string]any{"ok": true, "message": "Домен подтверждён: " + d.NetBIOS + " ↔ " + d.DNS + " · " + d.SID, "domain": d})
+		}
+		return true
+	}
+	if r.URL.Path == "/admin/api/settings/test-feed" {
+		_, key := store.FeedConfig()
+		catalog, err := suricatarules.NewFeedClient().Catalog(ctx, key)
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+		} else {
+			writeJSON(w, map[string]any{"ok": true, "message": "Каталог Feed доступен для Cerber. Назначение правил выполняется в разделе сенсоров.", "sources": catalog.Sources})
 		}
 		return true
 	}

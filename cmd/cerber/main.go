@@ -53,6 +53,7 @@ const usage = `Cerber — прототип сканера на Go
   patch keygen -out FILE
   patch executor -config ABSOLUTE_FILE
   siem enroll -asset SERVER_ASSET_ID -out CREDENTIALS_FILE
+  siem import-suricata -zip CERBER_FEED_ZIP -admin EXISTING_ADMIN (local DB access required)
   siem revoke -agent AGENT_ID
   agent collect -asset LOCAL_ASSET_ID -credentials FILE [-check-package-updates | -check-windows-updates]
   agent enqueue -inventory ID -credentials FILE

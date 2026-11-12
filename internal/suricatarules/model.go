@@ -31,6 +31,7 @@ var ErrLimit = errors.New("Suricata catalog capacity reached")
 var ErrNotFound = errors.New("Suricata bundle not found")
 
 type Manifest struct {
+	Format          string    `json:"format,omitempty"`
 	ID              string    `json:"id"`
 	Name            string    `json:"name"`
 	Source          string    `json:"source"`
@@ -96,7 +97,7 @@ func (m Manifest) SigningBytes() []byte { m.Signature = ""; b, _ := json.Marshal
 func (m Manifest) Verify(key string) error {
 	k, e := base64.StdEncoding.DecodeString(key)
 	sig, se := base64.StdEncoding.DecodeString(m.Signature)
-	if e != nil || se != nil || len(k) != ed25519.PublicKeySize || !ValidID(m.ID) || m.EngineMajor < 7 || m.EngineMajor > 8 || m.Count < 1 || m.Bytes < 1 || m.Bytes > MaxRules || m.CompressedBytes < 1 || m.CompressedBytes > MaxCompressed || !ed25519.Verify(k, m.SigningBytes(), sig) {
+	if e != nil || se != nil || !validFormat(m.Format) || len(k) != ed25519.PublicKeySize || !ValidID(m.ID) || m.EngineMajor < 7 || m.EngineMajor > 8 || m.Count < 1 || m.Bytes < 1 || m.Bytes > MaxRules || m.CompressedBytes < 1 || m.CompressedBytes > MaxCompressed || !ed25519.Verify(k, m.SigningBytes(), sig) {
 		return ErrInvalid
 	}
 	return nil
@@ -181,12 +182,12 @@ func Normalize(data []byte) ([]byte, int, error) {
 				}
 				var err error
 				rev, err = strconv.ParseUint(m[1], 10, 32)
-				if err != nil {
+				if err != nil || rev == 0 {
 					return nil, 0, ErrInvalid
 				}
 			}
 		}
-		if sid == 0 || rev == 0 || seen[sid] {
+		if sid == 0 || seen[sid] {
 			return nil, 0, fmt.Errorf("%w: line %d: missing/duplicate SID or invalid rev", ErrInvalid, n+1)
 		}
 		seen[sid] = true
@@ -200,8 +201,11 @@ func Normalize(data []byte) ([]byte, int, error) {
 	return out.Bytes(), count, nil
 }
 func Pack(name, source string, major int, data []byte) (Bundle, error) {
+	return PackFiles(name, source, major, data, "")
+}
+func PackFiles(name, source string, major int, data []byte, classification string) (Bundle, error) {
 	var b Bundle
-	if strings.TrimSpace(name) == "" || len(name) > 120 || strings.ContainsAny(name, "\r\n\x00") || (source != "custom" && source != "et-open" && source != "combined") || (major != 7 && major != 8) {
+	if strings.TrimSpace(name) == "" || len(name) > 120 || strings.ContainsAny(name, "\r\n\x00") || (source != "custom" && source != "et-open" && source != "combined" && source != "feed") || (major != 7 && major != 8) || ValidateClassification(classification) != nil {
 		return b, ErrInvalid
 	}
 	normalized, count, e := Normalize(data)
@@ -210,7 +214,16 @@ func Pack(name, source string, major int, data []byte) (Bundle, error) {
 	}
 	var zipped bytes.Buffer
 	w := gzip.NewWriter(&zipped)
-	if _, e = w.Write(normalized); e != nil {
+	payload := normalized
+	format := ""
+	if classification != "" {
+		format = filesFormat
+		payload, e = json.Marshal(ruleFiles{Rules: string(normalized), Classification: classification})
+		if e != nil {
+			return b, e
+		}
+	}
+	if _, e = w.Write(payload); e != nil {
 		return b, e
 	}
 	if e = w.Close(); e != nil {
@@ -220,27 +233,46 @@ func Pack(name, source string, major int, data []byte) (Bundle, error) {
 		return b, ErrLimit
 	}
 	b.Data = zipped.Bytes()
-	b.Manifest = Manifest{ID: DataID(major, b.Data), Name: name, Source: source, EngineMajor: major, Count: count, Bytes: len(normalized), CompressedBytes: len(b.Data)}
+	b.Manifest = Manifest{Format: format, ID: DataID(major, b.Data), Name: name, Source: source, EngineMajor: major, Count: count, Bytes: len(normalized), CompressedBytes: len(b.Data)}
 	return b, nil
 }
 func Unpack(m Manifest, data []byte) ([]byte, error) {
-	if len(data) != m.CompressedBytes || len(data) > MaxCompressed || DataID(m.EngineMajor, data) != m.ID {
-		return nil, ErrInvalid
+	rules, _, err := UnpackFiles(m, data)
+	return rules, err
+}
+func UnpackFiles(m Manifest, data []byte) ([]byte, string, error) {
+	if !validFormat(m.Format) || len(data) != m.CompressedBytes || len(data) > MaxCompressed || DataID(m.EngineMajor, data) != m.ID {
+		return nil, "", ErrInvalid
 	}
 	r, e := gzip.NewReader(bytes.NewReader(data))
 	if e != nil {
-		return nil, ErrInvalid
+		return nil, "", ErrInvalid
 	}
 	defer r.Close()
-	plain, e := io.ReadAll(io.LimitReader(r, MaxRules+1))
-	if e != nil || len(plain) != m.Bytes || len(plain) > MaxRules {
-		return nil, ErrInvalid
+	limit := MaxRules
+	if m.Format != "" {
+		limit = MaxRules*2 + MaxClassification*6 + 128
+	}
+	plain, e := io.ReadAll(io.LimitReader(r, int64(limit)+1))
+	classification := ""
+	if e != nil || len(plain) > limit {
+		return nil, "", ErrInvalid
+	}
+	if m.Format != "" {
+		var files ruleFiles
+		if json.Unmarshal(plain, &files) != nil || files.Classification == "" {
+			return nil, "", ErrInvalid
+		}
+		plain, classification = []byte(files.Rules), files.Classification
+	}
+	if len(plain) != m.Bytes || len(plain) > MaxRules || ValidateClassification(classification) != nil {
+		return nil, "", ErrInvalid
 	}
 	normalized, n, e := Normalize(plain)
 	if e != nil || n != m.Count || !bytes.Equal(normalized, plain) {
-		return nil, ErrInvalid
+		return nil, "", ErrInvalid
 	}
-	return plain, nil
+	return plain, classification, nil
 }
 
 func DataID(major int, b []byte) string { return Hash(append([]byte(strconv.Itoa(major)+":"), b...)) }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"time"
 
 	rules "github.com/rkislov/cerber/internal/suricatarules"
 )
@@ -22,6 +23,26 @@ type suricataStore interface {
 type suricataService struct{ work sync.Mutex }
 
 func (h *suricataService) serve(base Store, w http.ResponseWriter, r *http.Request, u User) bool {
+	if r.URL.Path == "/admin/api/suricata-summary" {
+		if r.Method != "GET" {
+			http.Error(w, "method not allowed", 405)
+			return true
+		}
+		s, ok := base.(interface {
+			SuricataSummary(context.Context, time.Time) (rules.Summary, error)
+		})
+		if !ok {
+			http.Error(w, "unavailable", 503)
+			return true
+		}
+		v, err := s.SuricataSummary(r.Context(), time.Now().UTC())
+		if err != nil {
+			http.Error(w, "unavailable", 503)
+		} else {
+			writeJSON(w, v)
+		}
+		return true
+	}
 	if serveSuricataAutomation(base, w, r, u) {
 		return true
 	}
@@ -55,7 +76,7 @@ func (h *suricataService) serve(base Store, w http.ResponseWriter, r *http.Reque
 			fail(e)
 			return true
 		}
-		job := map[string]any{"running": false, "message": "Расписание, состояние и история ET Open — ниже."}
+		job := map[string]any{"running": false, "message": "Расписание, состояние и история загрузок — ниже."}
 		if automation, ok := base.(suricataAutomationStore); ok {
 			feeds, e := automation.SuricataFeeds(r.Context())
 			if e != nil {
@@ -65,7 +86,7 @@ func (h *suricataService) serve(base Store, w http.ResponseWriter, r *http.Reque
 			for _, f := range feeds {
 				if f.State == "downloading" || f.Requested {
 					job["running"] = true
-					job["message"] = "Обновление ET Open выполняется планировщиком"
+					job["message"] = "Загрузка правил выполняется планировщиком"
 				}
 			}
 		}
@@ -148,6 +169,7 @@ func (h *suricataService) serve(base Store, w http.ResponseWriter, r *http.Reque
 			return true
 		}
 		data := []byte(c.Rules)
+		classification := ""
 		source := "custom"
 		if c.BaseID != "" {
 			b, e := s.SuricataBundle(r.Context(), c.BaseID)
@@ -159,15 +181,16 @@ func (h *suricataService) serve(base Store, w http.ResponseWriter, r *http.Reque
 				fail(rules.ErrInvalid)
 				return true
 			}
-			plain, e := rules.Unpack(b.Manifest, b.Data)
+			plain, classes, e := rules.UnpackFiles(b.Manifest, b.Data)
 			if e != nil {
 				fail(e)
 				return true
 			}
 			data = append(plain, data...)
+			classification = classes
 			source = "combined"
 		}
-		b, e := rules.Pack(c.Name, source, c.EngineMajor, data)
+		b, e := rules.PackFiles(c.Name, source, c.EngineMajor, data, classification)
 		if e != nil {
 			if errors.Is(e, rules.ErrInvalid) {
 				w.WriteHeader(400)

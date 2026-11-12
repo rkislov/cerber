@@ -117,12 +117,13 @@ func Tick(ctx context.Context, s AutomationStore, download func(context.Context,
 			custom, err = s.SuricataBundle(ctx, p.CustomID)
 			if err == nil {
 				var plain, extra []byte
-				plain, err = Unpack(b.Manifest, b.Data)
+				var classification string
+				plain, classification, err = UnpackFiles(b.Manifest, b.Data)
 				if err == nil {
 					extra, err = Unpack(custom.Manifest, custom.Data)
 				}
 				if err == nil {
-					b, err = Pack("ET Open + собственные правила", "combined", p.EngineMajor, append(plain, extra...))
+					b, err = PackFiles("Центральные + собственные правила", "combined", p.EngineMajor, append(plain, extra...), classification)
 				}
 			}
 		}
@@ -132,12 +133,16 @@ func Tick(ctx context.Context, s AutomationStore, download func(context.Context,
 	}
 	return nil
 }
-func RunAutomation(ctx context.Context, s AutomationStore, onError func(error)) {
+func RunAutomation(ctx context.Context, s AutomationStore, onError func(error), downloads ...func(context.Context, int) (Bundle, error)) {
+	download := DownloadET
+	if len(downloads) > 0 && downloads[0] != nil {
+		download = downloads[0]
+	}
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	for {
 		work, cancel := context.WithTimeout(ctx, 4*time.Minute)
-		e := Tick(work, s, DownloadET)
+		e := Tick(work, s, download)
 		cancel()
 		if e != nil && ctx.Err() == nil && onError != nil {
 			onError(e)

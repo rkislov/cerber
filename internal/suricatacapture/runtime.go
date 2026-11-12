@@ -70,14 +70,15 @@ func (c Runtime) Render(base string) (string, error) {
 	}
 	quote := func(s string) string { b, _ := json.Marshal(s); return string(b) }
 	sections := map[string]string{
-		"default-rule-path": "default-rule-path: " + quote(c.RulesDirectory) + "\n",
-		"rule-files":        "rule-files:\n  - " + quote(filepath.Join(c.RulesDirectory, "active.rules")) + "\n",
-		"default-log-dir":   "default-log-dir: " + quote(filepath.Dir(c.EVEPath)) + "\n",
-		"unix-command":      "unix-command:\n  enabled: yes\n  filename: " + quote(filepath.Join(c.RulesDirectory, "suricata.socket")) + "\n",
-		"outputs":           "outputs:\n  - eve-log:\n      enabled: yes\n      filetype: regular\n      filename: " + quote(c.EVEPath) + "\n      filemode: 660\n      community-id: true\n      types:\n        - alert:\n            payload: no\n            packet: no\n            tagged-packets: no\n            metadata:\n              app-layer: false\n              flow: true\n              rule:\n                metadata: false\n                raw: false\n        - flow\n",
-		"af-packet":         "af-packet:\n  - interface: " + quote(c.Interface) + "\n    threads: 1\n    cluster-id: 99\n    cluster-type: cluster_flow\n    defrag: yes\n    use-mmap: yes\n    tpacket-v3: yes\n",
-		"stats":             "stats:\n  enabled: no\n",
-		"logging":           "logging:\n  default-log-level: notice\n  outputs:\n    - console:\n        enabled: yes\n",
+		"classification-file": "classification-file: " + quote(filepath.Join(c.RulesDirectory, "active.rules.classification.config")) + "\n",
+		"default-rule-path":   "default-rule-path: " + quote(c.RulesDirectory) + "\n",
+		"rule-files":          "rule-files:\n  - " + quote(filepath.Join(c.RulesDirectory, "active.rules")) + "\n",
+		"default-log-dir":     "default-log-dir: " + quote(filepath.Dir(c.EVEPath)) + "\n",
+		"unix-command":        "unix-command:\n  enabled: yes\n  filename: " + quote(filepath.Join(c.RulesDirectory, "suricata.socket")) + "\n",
+		"outputs":             "outputs:\n  - eve-log:\n      enabled: yes\n      filetype: regular\n      filename: " + quote(c.EVEPath) + "\n      filemode: 660\n      community-id: true\n      types:\n        - alert:\n            payload: no\n            packet: no\n            tagged-packets: no\n            metadata:\n              app-layer: false\n              flow: true\n              rule:\n                metadata: false\n                raw: false\n        - flow\n",
+		"af-packet":           "af-packet:\n  - interface: " + quote(c.Interface) + "\n    threads: 1\n    cluster-id: 99\n    cluster-type: cluster_flow\n    defrag: yes\n    use-mmap: yes\n    tpacket-v3: yes\n",
+		"stats":               "stats:\n  enabled: no\n",
+		"logging":             "logging:\n  default-log-level: notice\n  outputs:\n    - console:\n        enabled: yes\n",
 	}
 	// Each section ends at the next non-indented YAML key. Comments are retained
 	// only outside replaced sections; duplicate active keys are rejected.
@@ -176,6 +177,18 @@ func Run(ctx context.Context, c Runtime, log io.Writer) error {
 		return e
 	}
 	rule := filepath.Join(c.RulesDirectory, "active.rules")
+	classification := rule + ".classification.config"
+	if _, e = os.Lstat(classification); os.IsNotExist(e) {
+		b, err := os.ReadFile("/etc/suricata/classification.config")
+		if err != nil {
+			return err
+		}
+		if e = os.WriteFile(classification, b, 0640); e != nil {
+			return e
+		}
+	} else if e != nil {
+		return e
+	}
 	if _, e = os.Lstat(rule); os.IsNotExist(e) {
 		if e = os.WriteFile(rule, []byte("# Assign a signed ruleset from SIEM\n"), 0600); e != nil {
 			return e

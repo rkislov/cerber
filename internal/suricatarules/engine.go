@@ -73,7 +73,13 @@ func (e NativeEngine) Test(ctx context.Context, rules string) error {
 		return err
 	}
 	defer os.RemoveAll(logs)
-	output, err := e.run(ctx, "-T", "--init-errors-fatal", "-c", e.Config.YAML, "-S", rules, "-l", logs, "--set", "unix-command.enabled=no")
+	args := []string{"-T", "--init-errors-fatal", "-c", e.Config.YAML, "-S", rules, "-l", logs, "--set", "unix-command.enabled=no"}
+	if _, err = os.Stat(rules + ".classification.config"); err == nil {
+		args = append(args, "--set", "classification-file="+rules+".classification.config")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	output, err := e.run(ctx, args...)
 	if err != nil {
 		detail := strings.TrimSpace(string(output))
 		if len(detail) > 350 {
@@ -127,6 +133,16 @@ func (e NativeEngine) CaptureCommand(ctx context.Context, command string, args m
 	return nil, ErrInvalid
 }
 func (e NativeEngine) Reload(ctx context.Context, count int) error {
+	classification := filepath.Join(e.Config.Directory, "active.rules.classification.config")
+	if _, err := os.Stat(classification); err == nil {
+		b, err := e.socket(ctx, "conf-get", map[string]string{"variable": "classification-file"})
+		var configured string
+		if err != nil || json.Unmarshal(b, &configured) != nil || configured != classification {
+			return fmt.Errorf("running Suricata must use the managed classification.config")
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	// Check the *running* engine loads precisely the managed absolute rule file.
 	b, err := e.socket(ctx, "conf-get", map[string]string{"variable": "rule-files.0"})
 	if err != nil {
