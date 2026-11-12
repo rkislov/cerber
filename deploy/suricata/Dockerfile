@@ -15,6 +15,7 @@ RUN set -eu; apt-get update; \
     printf '%s  /tmp/suricata.deb\n' "$digest" | sha256sum -c -; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/suricata.deb; \
     /usr/bin/suricata -V | grep -F '8.0.8'; \
+    chmod 0755 /etc/suricata; chmod 0644 /etc/suricata/*.config /etc/suricata/suricata.yaml; \
     rm -f /tmp/suricata.deb; rm -rf /var/lib/apt/lists/*
 COPY cerber-sensor /usr/local/bin/cerber-sensor
 USER 1000:1000
