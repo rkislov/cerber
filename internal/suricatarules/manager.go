@@ -143,9 +143,21 @@ func readBounded(path string, limit int) ([]byte, error) {
 	return b, e
 }
 func (m *Manager) Run(ctx context.Context) {
-	if e := m.initialize(ctx); e != nil {
-		v := m.current()
-		m.state(&v, "error", e.Error())
+	for {
+		if e := m.initialize(ctx); e == nil {
+			break
+		} else {
+			v := m.current()
+			m.state(&v, "error", e.Error())
+		}
+		// Capture and its verifier may restart together. Recovery restores both
+		// files before reloading; let capture start with that restored pair and
+		// retry confirmation before accepting another assignment.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
 	}
 	for {
 		select {
